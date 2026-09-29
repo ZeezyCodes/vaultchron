@@ -1,0 +1,50 @@
+# VaultChron configuration template.
+# Copy this file to config.yaml and adjust paths and settings for your environment.
+# Paths starting with ~ or containing environment variables (e.g. $HOME) will be expanded.
+
+vault:
+  path: ~/vault
+  index_file: 00-Dev-Index.md
+  rollups_dir: Daily-Rollups
+  projects_dir: Projects
+  recent_days: 7
+
+scan:
+  roots:
+    - ~/projects
+  max_depth: 3
+  excludes:
+    - .nvm
+    - .local
+    - .cache
+    - node_modules
+    - vendor
+
+llm:
+  # Optional base_url for OpenAI-compatible endpoints.
+  # Defaults to Google Gemini: https://generativelanguage.googleapis.com/v1beta/openai
+  # Compatible with OpenAI (https://api.openai.com/v1), OpenRouter (https://openrouter.ai/api/v1),
+  # or local providers such as Ollama (http://localhost:11434/v1) and LM Studio.
+  # base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  provider: gemini
+  waterfall:                       # tried in order; 429 falls through
+    - gemini-3.8-flash
+    - gemini-3.7-flash
+    - gemini-3.6-flash
+  api_key_env: GOOGLE_API_KEY      # read from environment
+
+# Optional: Map repository directory names to custom slugs and languages.
+# If omitted or not matched, repository names are automatically slugified
+# and language defaults to "go".
+# project_tags:
+#   MyProject:
+#     slug: my-project
+#     lang: go
+
+agent_logs:
+  # Reads local AI-agent session logs (e.g. Antigravity, Poolside) and sends
+  # extracted session goals, tasks, and outcomes to the LLM. Off by default for privacy.
+  enabled: false
+  antigravity_path: ~/.antigravity
+  poolside_path: ~/.poolside
+

@@ -1,0 +1,53 @@
+# NOTE: Requires golangci-lint v2.14.0 or higher.
+# Go 1.27.1 emits pkgbits export data version 4/5. Older releases of golangci-lint
+# (including all v1.x and v2.0.0-v2.13.2) bundle golang.org/x/tools <= v0.49.0, which
+# only supports export data up to version 2 and fails with a typecheck decoder panic.
+# v2.14.0 is the first release to update to golang.org/x/tools v0.50.0.
+# Installation: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+
+version: "2"
+run:
+  tests: true
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        - (*text/tabwriter.Writer).Flush
+    govet:
+      enable-all: false
+    misspell:
+      locale: US
+    staticcheck:
+      checks:
+        - all
+        - -QF*
+        - -ST1000
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

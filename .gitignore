@@ -1,0 +1,23 @@
+# Go binaries
+/vaultchron
+/vaultchron_migrate
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Runtime config
+config.yaml

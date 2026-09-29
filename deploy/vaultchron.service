@@ -1,0 +1,9 @@
+[Unit]
+Description=VaultChron Devlog Engine
+After=network.target
+
+[Service]
+Type=oneshot
+# Adjust WorkingDirectory and ExecStart to your installation path (e.g. /opt/vaultchron).
+WorkingDirectory=/opt/vaultchron
+ExecStart=/opt/vaultchron/deploy/vaultchron.sh
