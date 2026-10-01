@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -19,6 +20,47 @@ import (
 	"github.com/ZeezyCodes/vaultchron/internal/vault"
 )
 
+var version = "dev"
+
+// resolveVersion resolves the application version string.
+// If v is set and not "dev", it is returned directly.
+// If v is "dev" (or empty), it falls back to the build info main version
+// reported by readInfo if non-empty and not "(devel)".
+// Otherwise, it returns "dev".
+func resolveVersion(v string, readInfo func() (*debug.BuildInfo, bool)) string {
+	if v != "" && v != "dev" {
+		return v
+	}
+	if readInfo != nil {
+		if info, ok := readInfo(); ok && info != nil {
+			if info.Main.Version != "" && info.Main.Version != "(devel)" {
+				return info.Main.Version
+			}
+		}
+	}
+	if v != "" {
+		return v
+	}
+	return "dev"
+}
+
+func getVersion() string {
+	return resolveVersion(version, debug.ReadBuildInfo)
+}
+
+// hasVersionFlag returns true if args contains -version or --version before any bare "--" separator.
+func hasVersionFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "-version" || arg == "--version" {
+			return true
+		}
+	}
+	return false
+}
+
 // validWindowRegex enforces git time-window format defense-in-depth.
 var validWindowRegex = regexp.MustCompile(`^[0-9]+\.(minute|minutes|hour|hours|day|days|week|weeks|month|months)\.ago$`)
 
@@ -26,6 +68,11 @@ var validWindowRegex = regexp.MustCompile(`^[0-9]+\.(minute|minutes|hour|hours|d
 const lockFilePerms = 0o600
 
 func main() {
+	if hasVersionFlag(os.Args[1:]) {
+		fmt.Println("vaultchron " + getVersion())
+		os.Exit(0)
+	}
+
 	lockPath := defaultLockPath()
 	// Acquire advisory lock to prevent overlapping runs via cron or timers.
 	lockFile, acquired, err := acquireLock(lockPath)
@@ -56,6 +103,7 @@ func main() {
 // It is separated from main() so that the advisory lock can be released
 // via defer before os.Exit is called.
 func run() int {
+	versionFlag := flag.Bool("version", false, "print version and exit")
 	configPath := flag.String("config", "", "path to config.yaml (defaults to config.yaml or config.example.yaml)")
 	scanMode := flag.Bool("scan", false, "run collector only: discover repos, harvest metadata, print results, and exit 0")
 	window := flag.String("window", "24.hours.ago", "git time window for --since log query and HEAD@{<window>} diff reference")
@@ -65,6 +113,11 @@ func run() int {
 	migrateVault := flag.Bool("migrate-vault", false, "migrate legacy devlog notes in vault to v3 callout taxonomy in-place")
 	migrateV3 := flag.Bool("migrate-v3", false, "alias for -migrate-vault")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Println("vaultchron " + getVersion())
+		return 0
+	}
 
 	if !validWindowRegex.MatchString(*window) {
 		fmt.Fprintf(os.Stderr, "invalid -window %q: expected format like <number>.(hours|days|weeks|minutes).ago (e.g. 24.hours.ago)\n", *window)

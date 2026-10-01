@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -172,5 +173,106 @@ func TestRunMigrate_VaultDryRunAndActual(t *testing.T) {
 	migrated, _ := os.ReadFile(notePath)
 	if !strings.Contains(string(migrated), "[!note]- 📊 Session Telemetry") {
 		t.Errorf("expected v3 callout in migrated note")
+	}
+}
+
+// TestResolveVersion verifies version resolution across explicit, fallback, and empty cases.
+func TestResolveVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		v        string
+		readInfo func() (*debug.BuildInfo, bool)
+		expected string
+	}{
+		{
+			name: "explicit version overrides fallback",
+			v:    "v1.2.3",
+			readInfo: func() (*debug.BuildInfo, bool) {
+				return &debug.BuildInfo{
+					Main: debug.Module{Version: "v9.9.9"},
+				}, true
+			},
+			expected: "v1.2.3",
+		},
+		{
+			name: "fallback to build info when dev",
+			v:    "dev",
+			readInfo: func() (*debug.BuildInfo, bool) {
+				return &debug.BuildInfo{
+					Main: debug.Module{Version: "v0.1.0"},
+				}, true
+			},
+			expected: "v0.1.0",
+		},
+		{
+			name: "fallback skipped when build info is devel",
+			v:    "dev",
+			readInfo: func() (*debug.BuildInfo, bool) {
+				return &debug.BuildInfo{
+					Main: debug.Module{Version: "(devel)"},
+				}, true
+			},
+			expected: "dev",
+		},
+		{
+			name: "empty build info version returns dev",
+			v:    "dev",
+			readInfo: func() (*debug.BuildInfo, bool) {
+				return &debug.BuildInfo{
+					Main: debug.Module{Version: ""},
+				}, true
+			},
+			expected: "dev",
+		},
+		{
+			name: "nil build info returns dev",
+			v:    "dev",
+			readInfo: func() (*debug.BuildInfo, bool) {
+				return nil, false
+			},
+			expected: "dev",
+		},
+		{
+			name:     "empty version string returns dev",
+			v:        "",
+			readInfo: nil,
+			expected: "dev",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveVersion(tc.v, tc.readInfo)
+			if got != tc.expected {
+				t.Errorf("resolveVersion(%q) = %q; want %q", tc.v, got, tc.expected)
+			}
+		})
+	}
+}
+
+// TestHasVersionFlag verifies detection of -version and --version flags.
+func TestHasVersionFlag(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		expected bool
+	}{
+		{"single dash", []string{"-version"}, true},
+		{"double dash", []string{"--version"}, true},
+		{"with preceding flags", []string{"-vault", "/tmp", "-version"}, true},
+		{"with following flags", []string{"-version", "-dry-run"}, true},
+		{"no version flag", []string{"-dry-run"}, false},
+		{"empty args", []string{}, false},
+		{"bare double dash terminates search", []string{"--", "-version"}, false},
+		{"flag value is not version flag", []string{"-file", "version"}, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hasVersionFlag(tc.args)
+			if got != tc.expected {
+				t.Errorf("hasVersionFlag(%v) = %v; want %v", tc.args, got, tc.expected)
+			}
+		})
 	}
 }

@@ -6,10 +6,52 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 
 	"github.com/ZeezyCodes/vaultchron/internal/config"
 	"github.com/ZeezyCodes/vaultchron/internal/vault"
 )
+
+var version = "dev"
+
+// resolveVersion resolves the application version string.
+// If v is set and not "dev", it is returned directly.
+// If v is "dev" (or empty), it falls back to the build info main version
+// reported by readInfo if non-empty and not "(devel)".
+// Otherwise, it returns "dev".
+func resolveVersion(v string, readInfo func() (*debug.BuildInfo, bool)) string {
+	if v != "" && v != "dev" {
+		return v
+	}
+	if readInfo != nil {
+		if info, ok := readInfo(); ok && info != nil {
+			if info.Main.Version != "" && info.Main.Version != "(devel)" {
+				return info.Main.Version
+			}
+		}
+	}
+	if v != "" {
+		return v
+	}
+	return "dev"
+}
+
+func getVersion() string {
+	return resolveVersion(version, debug.ReadBuildInfo)
+}
+
+// hasVersionFlag returns true if args contains -version or --version before any bare "--" separator.
+func hasVersionFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "-version" || arg == "--version" {
+			return true
+		}
+	}
+	return false
+}
 
 // resolveVaultPath resolves the Obsidian vault root path using vaultFlag,
 // then config file, and finally fallback to DefaultConfig.
@@ -95,11 +137,22 @@ func runMigrate(vaultFlag, configPath, fileFlag string, dryRun bool, out, errOut
 }
 
 func main() {
+	if hasVersionFlag(os.Args[1:]) {
+		fmt.Println("vaultchron_migrate " + getVersion())
+		os.Exit(0)
+	}
+
 	vaultFlag := flag.String("vault", "", "path to the Obsidian vault root (defaults to config.yaml vault.path or default vault path)")
 	configPath := flag.String("config", "", "path to config.yaml")
 	fileFlag := flag.String("file", "", "migrate a single devlog markdown file instead of the whole vault")
 	dryRun := flag.Bool("dry-run", false, "display what would be migrated without modifying files")
+	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Println("vaultchron_migrate " + getVersion())
+		os.Exit(0)
+	}
 
 	os.Exit(runMigrate(*vaultFlag, *configPath, *fileFlag, *dryRun, os.Stdout, os.Stderr))
 }
