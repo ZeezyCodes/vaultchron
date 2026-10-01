@@ -75,3 +75,13 @@ $(go env GOPATH)/bin/govulncheck ./...
 - **Scope Containment**: Keep changes focused on the task at hand. Avoid unrelated refactorings or cosmetic formatting changes across untouched files.
 - **Clean Git History**: Avoid merge commits in PRs; rebase cleanly against the target base branch before submission.
 - **Standard Library First**: Adhere to standard library implementations wherever possible (`os/exec`, `path/filepath`, `text/template`, `net/http`) before proposing new external dependencies.
+
+## Releases (maintainers)
+
+To publish a new release:
+1. Ensure `main` is clean, all CI checks pass, and tests succeed locally.
+2. Create an annotated git tag matching `vX.Y.Z` on `main` (e.g. `git tag -a v0.1.0 -m "Release v0.1.0"`).
+3. Push the tag to upstream (`git push origin v0.1.0`).
+4. The GitHub Actions release workflow automatically triggers, builds cross-compiled binaries, and generates a draft release with checksums via GoReleaser.
+5. Review the draft release, verify the checksums, and publish the release.
+

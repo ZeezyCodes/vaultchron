@@ -50,6 +50,7 @@ All contributors and automated agents must verify changes against the full suite
 - **Conventional Commits:** Structure commit messages around single logical units of work (`feat:`, `fix:`, `refactor:`, `test:`, `chore:`, `docs:`).
 - **Atomic PRs:** Keep pull requests focused on a single change or feature branch.
 - **Test Requirements:** All bug fixes, behavior-changing logic, and new features must include accompanying automated tests.
+- **No Version Tags or Release Triggers:** Contributors and automated agents must never create or push version tags or releases (tags matching `v*` trigger the release workflow).
 
 ---
 

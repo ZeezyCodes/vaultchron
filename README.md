@@ -28,16 +28,49 @@ VaultChron crawls configured project directories, harvests git commit telemetry,
 
 ## Installation
 
-### From Source
+### Prerequisites
 
-Clone the repository and build the binaries:
+Before running VaultChron, ensure the following prerequisites are met:
+- **Git**: Git CLI installed and available on `$PATH`.
+- **LLM API Key**: API key configured in your environment (e.g. `export GOOGLE_API_KEY="..."`).
+- **Configuration**: Copy `config.example.yaml` to `config.yaml` (`cp config.example.yaml config.yaml`) and configure your vault and scan directories.
+
+### Download a Release (Linux & macOS)
+
+Prebuilt, checksummed binaries for Linux and macOS (`amd64` and `arm64`) are published on [GitHub Releases](https://github.com/ZeezyCodes/vaultchron/releases).
+
+Run the following snippet to download, verify, and extract a release:
 
 ```bash
-git clone https://github.com/ZeezyCodes/vaultchron.git
-cd vaultchron
-go build -o vaultchron ./cmd/vaultchron
-go build -o vaultchron_migrate ./cmd/vaultchron_migrate
+# Specify the desired release version (e.g. v0.1.0)
+VERSION="vX.Y.Z"
+OS="linux"   # "linux" or "darwin"
+ARCH="amd64" # "amd64" or "arm64"
+
+# Strip leading 'v' for archive asset naming
+VER_NUM="${VERSION#v}"
+
+# Download release archive and checksums
+curl -fsSLO "https://github.com/ZeezyCodes/vaultchron/releases/download/${VERSION}/vaultchron_${VER_NUM}_${OS}_${ARCH}.tar.gz"
+curl -fsSLO "https://github.com/ZeezyCodes/vaultchron/releases/download/${VERSION}/checksums.txt"
+
+# Verify SHA256 checksum (use shasum -a 256 on macOS if sha256sum is unavailable)
+sha256sum --ignore-missing -c checksums.txt
+
+# Extract archive (contains vaultchron, vaultchron_migrate, config.example.yaml, deploy/, and LICENSE)
+tar -xzf "vaultchron_${VER_NUM}_${OS}_${ARCH}.tar.gz"
 ```
+
+> [!NOTE]
+> **Unsigned Binaries & macOS Gatekeeper:**
+> Binaries are currently unsigned. If you download binaries via a macOS web browser rather than `curl`, macOS may quarantine them. Remove the quarantine attribute with:
+> ```bash
+> xattr -d com.apple.quarantine vaultchron vaultchron_migrate
+> ```
+
+> [!IMPORTANT]
+> **Windows Support:**
+> Prebuilt Windows binaries are not currently provided because VaultChron's advisory file locking (`syscall.Flock`) and process lifecycle management are Unix-specific.
 
 ### Via `go install`
 
@@ -46,6 +79,17 @@ Install the latest binaries directly into your `$GOPATH/bin`:
 ```bash
 go install github.com/ZeezyCodes/vaultchron/cmd/vaultchron@latest
 go install github.com/ZeezyCodes/vaultchron/cmd/vaultchron_migrate@latest
+```
+
+### From Source
+
+Clone the repository and build the binaries using Go 1.27.1+:
+
+```bash
+git clone https://github.com/ZeezyCodes/vaultchron.git
+cd vaultchron
+go build -o vaultchron ./cmd/vaultchron
+go build -o vaultchron_migrate ./cmd/vaultchron_migrate
 ```
 
 ## Quick Start
