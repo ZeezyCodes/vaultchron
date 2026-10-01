@@ -1,0 +1,64 @@
+version: 2
+
+project_name: vaultchron
+
+builds:
+  - id: vaultchron
+    main: ./cmd/vaultchron
+    binary: vaultchron
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+  - id: vaultchron_migrate
+    main: ./cmd/vaultchron_migrate
+    binary: vaultchron_migrate
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+      - config.example.yaml
+      - deploy/*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  # draft: true allows maintainers to review artifacts before publishing;
+  # this can be changed to false once the release pipeline is trusted.
+  draft: true
+  prerelease: auto

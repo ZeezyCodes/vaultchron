@@ -21,3 +21,6 @@ go.work.sum
 
 # Runtime config
 config.yaml
+
+# Release artifacts
+dist/
