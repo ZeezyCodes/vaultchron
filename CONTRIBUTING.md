@@ -87,3 +87,4 @@ To publish a new release:
 4. The GitHub Actions release workflow automatically triggers, builds cross-compiled binaries, and generates a draft release with checksums via GoReleaser.
 5. Review the draft release, verify the checksums, and publish the release.
 
+The one-line install scripts (`install.sh` and `install.ps1`) live on `main` rather than in release assets. They depend directly on GoReleaser archive naming (`vaultchron_<version>_<os>_<arch>.tar.gz` and `.zip`) and `checksums.txt`; changing the release asset naming convention requires updating both installer scripts.

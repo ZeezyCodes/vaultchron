@@ -18,9 +18,63 @@ VaultChron crawls configured project directories, harvests git commit telemetry,
 >
 > Before running VaultChron against proprietary, sensitive, or NDA-governed codebases, review your repository contents to ensure no plaintext secrets exist, or configure an air-gapped / local inference backend such as Ollama or LM Studio.
 
+## Quick install
+
+Linux and macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/install.ps1 | iex
+```
+
+With Go installed (any OS):
+
+```bash
+go install github.com/ZeezyCodes/vaultchron/cmd/vaultchron@latest
+```
+
+To upgrade, re-run the same install command.
+
+Requirements: Git on PATH and an LLM API key (such as `GOOGLE_API_KEY`) configured in your environment.
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `VAULTCHRON_VERSION` | Release version to install | Latest published release |
+| `VAULTCHRON_INSTALL_DIR` | Installation directory for binaries | `$HOME/.local/bin` (Linux/macOS), `%LOCALAPPDATA%\Programs\vaultchron` (Windows) |
+| `VAULTCHRON_BASE_URL` | Base download URL for release assets | `https://github.com/ZeezyCodes/vaultchron/releases/download/<version>` |
+
+The installer scripts download prebuilt binaries from GitHub Releases, verify archive integrity against `checksums.txt` (this catches file corruption, not a compromised release), and install into a user folder with no administrator privileges required. The scripts are intentionally concise and auditable before execution: see [install.sh](install.sh) and [install.ps1](install.ps1).
+
+### First run
+
+1. Download the example configuration into your working directory:
+
+   Linux and macOS:
+   ```bash
+   curl -fsSLo config.yaml https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/config.example.yaml
+   ```
+
+   Windows (PowerShell):
+   ```powershell
+   irm https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/config.example.yaml -OutFile config.yaml
+   ```
+
+2. Open `config.yaml` to set `vault.path` (your Obsidian vault directory) and `scan.roots` (directories containing git repositories to scan).
+3. Set your LLM API key in your environment (e.g. `export GOOGLE_API_KEY="..."`).
+4. Test with a dry run:
+   ```bash
+   vaultchron -dry-run
+   ```
+   VaultChron looks for `config.yaml` in the working directory by default; use `-config <path>` if your config file is located elsewhere.
+
 ## Requirements
 
-- **Go**: Version `1.27.1` or higher is specified in `go.mod`.
+- **Go**: Version `1.27.1` or higher (only needed to build from source or use `go install`).
   > [!NOTE]
   > `go.mod` pins `go 1.27.1` as the minimum toolchain, and running linters locally needs `golangci-lint` v2.14.0+ because older releases cannot read Go 1.27 export data.
 - **Git**: Git CLI installed and accessible on `$PATH`.
@@ -35,7 +89,9 @@ Before running VaultChron, ensure the following prerequisites are met:
 - **LLM API Key**: API key configured in your environment (e.g. `export GOOGLE_API_KEY="..."`).
 - **Configuration**: Copy `config.example.yaml` to `config.yaml` (`cp config.example.yaml config.yaml`) and configure your vault and scan directories.
 
-### Download a Release (Linux & macOS)
+### Manual install (download and verify)
+
+#### Linux & macOS
 
 Prebuilt, checksummed binaries for Linux and macOS (`amd64` and `arm64`) are published on [GitHub Releases](https://github.com/ZeezyCodes/vaultchron/releases).
 
@@ -76,7 +132,7 @@ cd vaultchron && ./vaultchron -version
 > **Windows Support:**
 > Windows (`amd64`) is supported. Windows `arm64` binaries are not provided yet. Binaries are currently unsigned.
 
-### Download a Release (Windows PowerShell)
+#### Windows (PowerShell)
 
 Prebuilt, checksummed binaries for Windows (`amd64`) are published on [GitHub Releases](https://github.com/ZeezyCodes/vaultchron/releases).
 
