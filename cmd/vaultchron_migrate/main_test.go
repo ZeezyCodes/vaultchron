@@ -4,12 +4,20 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
 
 	"github.com/ZeezyCodes/vaultchron/internal/config"
 )
+
+func platformPath(p string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Clean(p)
+	}
+	return p
+}
 
 func TestResolveVaultPath(t *testing.T) {
 	// 1. Explicit vault flag
@@ -30,8 +38,9 @@ scan:
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
 		t.Fatalf("failed to write test config: %v", err)
 	}
-	if got := resolveVaultPath("", cfgPath); got != "/custom/from/config" {
-		t.Errorf("expected /custom/from/config, got %q", got)
+	expectedVault := platformPath("/custom/from/config")
+	if got := resolveVaultPath("", cfgPath); got != expectedVault {
+		t.Errorf("expected %s, got %q", expectedVault, got)
 	}
 
 	// 3. Fallback when config is missing

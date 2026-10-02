@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+// platformPath returns filepath.Clean(p) on Windows and p unchanged on other platforms.
+func platformPath(p string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Clean(p)
+	}
+	return p
+}
+
 // TestDefaultConfig verifies that DefaultConfig produces sensible generic defaults
 // based on the environment and standard locations.
 func TestDefaultConfig(t *testing.T) {
@@ -141,13 +149,6 @@ func TestExpandPath(t *testing.T) {
 		t.Skip("UserHomeDir unavailable")
 	}
 
-	cleanOnWindows := func(want string) string {
-		if runtime.GOOS == "windows" {
-			return filepath.Clean(want)
-		}
-		return want
-	}
-
 	tests := []struct {
 		input    string
 		expected string
@@ -156,11 +157,11 @@ func TestExpandPath(t *testing.T) {
 		{"~", filepath.Clean(home)},
 		{"~/vault", filepath.Join(home, "vault")},
 		{"$HOME/vault", filepath.Join(home, "vault")},
-		{"/static/path", cleanOnWindows("/static/path")},
+		{"/static/path", platformPath("/static/path")},
 		{"$HOME", home},
 		{"${HOME}/vault", filepath.Join(home, "vault")},
 		{"~/", home},
-		{"$UNSET_XYZ/x", cleanOnWindows("/x")},
+		{"$UNSET_XYZ/x", platformPath("/x")},
 	}
 
 	for _, tt := range tests {
@@ -318,11 +319,13 @@ scan:
 	if err != nil {
 		t.Fatalf("Load failed for minimal config: %v", err)
 	}
-	if cfg.Vault.Path != "/tmp/test-vault" {
-		t.Errorf("expected Vault.Path %q, got %q", "/tmp/test-vault", cfg.Vault.Path)
+	expectedVault := platformPath("/tmp/test-vault")
+	if cfg.Vault.Path != expectedVault {
+		t.Errorf("expected Vault.Path %q, got %q", expectedVault, cfg.Vault.Path)
 	}
-	if len(cfg.Scan.Roots) != 1 || cfg.Scan.Roots[0] != "/tmp/test-projects" {
-		t.Errorf("expected Scan.Roots [/tmp/test-projects], got %v", cfg.Scan.Roots)
+	expectedRoot := platformPath("/tmp/test-projects")
+	if len(cfg.Scan.Roots) != 1 || cfg.Scan.Roots[0] != expectedRoot {
+		t.Errorf("expected Scan.Roots [%s], got %v", expectedRoot, cfg.Scan.Roots)
 	}
 	if cfg.Scan.MaxDepth != 3 {
 		t.Errorf("expected defaulted MaxDepth 3, got %d", cfg.Scan.MaxDepth)
