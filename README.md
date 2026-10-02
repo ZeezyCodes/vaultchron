@@ -72,9 +72,100 @@ cd vaultchron && ./vaultchron -version
 > xattr -d com.apple.quarantine vaultchron vaultchron_migrate
 > ```
 
-> [!IMPORTANT]
+> [!NOTE]
 > **Windows Support:**
-> Prebuilt Windows binaries are not currently provided: VaultChron's advisory file locking uses `syscall.Flock`, which is Unix-only, so the project does not currently build for Windows.
+> Windows (`amd64`) is supported. Windows `arm64` binaries are not provided yet. Binaries are currently unsigned.
+
+### Download a Release (Windows PowerShell)
+
+Prebuilt, checksummed binaries for Windows (`amd64`) are published on [GitHub Releases](https://github.com/ZeezyCodes/vaultchron/releases).
+
+Run the following snippet to download, verify, and extract a release:
+
+```powershell
+# Specify the desired release version (e.g. v0.1.0)
+$ProgressPreference = 'SilentlyContinue'
+$Version = "vX.Y.Z"
+$VerNum  = $Version.TrimStart("v")
+$Archive = "vaultchron_${VerNum}_windows_amd64.zip"
+$BaseUrl = "https://github.com/ZeezyCodes/vaultchron/releases/download/$Version"
+
+# Download the archive and the checksum list
+Invoke-WebRequest -Uri "$BaseUrl/$Archive" -OutFile $Archive
+Invoke-WebRequest -Uri "$BaseUrl/checksums.txt" -OutFile checksums.txt
+
+# Verify the archive you downloaded
+$line = Select-String -Path checksums.txt -SimpleMatch "  $Archive" | Select-Object -First 1
+if (-not $line) { throw "No checksum entry found for $Archive" }
+$expected = ($line.Line -split "\s+")[0].ToLower()
+$actual   = (Get-FileHash -Path $Archive -Algorithm SHA256).Hash.ToLower()
+if ($actual -ne $expected) { throw "Checksum mismatch for $Archive" }
+
+# Extract into its own directory and check the version
+Expand-Archive -Path $Archive -DestinationPath vaultchron
+.\vaultchron\vaultchron.exe -version
+```
+
+#### Windows Setup & Usage
+
+Follow these steps to configure and run VaultChron on Windows:
+
+1. **Prerequisites**:
+   - **Git for Windows**: Git CLI must be installed and available on `PATH`.
+   - **LLM API Key**: An API key (e.g. `GOOGLE_API_KEY`) for Gemini or an alternative OpenAI-compatible provider.
+   *(Note: Go is NOT needed when running prebuilt release binaries.)*
+
+2. **Browser Downloads & SmartScreen**:
+   If the release zip was downloaded through a web browser rather than `Invoke-WebRequest`, Windows may block execution. Unblock the downloaded zip with:
+   ```powershell
+   Unblock-File -Path .\vaultchron_*_windows_amd64.zip
+   ```
+   Because binaries are currently unsigned, Windows SmartScreen may show a warning on first run. Click **More info** and then **Run anyway** to proceed.
+
+3. **Configuration**:
+   Copy `config.example.yaml` to `config.yaml`:
+   ```powershell
+   Copy-Item .\vaultchron\config.example.yaml .\vaultchron\config.yaml
+   ```
+   Open `config.yaml` to configure your vault and scan directories:
+   - Tilde (`~`) and `$HOME` paths automatically expand to your user profile directory on Windows.
+   - For path separators in YAML, use forward slashes (e.g. `C:/Users/me/vault`) or single quotes for backslash paths (e.g. `'C:\Users\me\vault'`).
+
+4. **API Key Setup**:
+   Set the API key in your user environment (takes effect in new shells):
+   ```powershell
+   [Environment]::SetEnvironmentVariable('GOOGLE_API_KEY', 'your-api-key-here', 'User')
+   ```
+   Alternatively, create the optional environment file at `%APPDATA%\vaultchron\env` with lines in `KEY=VALUE` format:
+   ```text
+   GOOGLE_API_KEY=your-api-key-here
+   ```
+
+5. **Running Once by Hand**:
+   Execute VaultChron directly from PowerShell:
+   ```powershell
+   cd vaultchron
+   .\vaultchron.exe -scan
+   .\vaultchron.exe -dry-run
+   .\vaultchron.exe
+   ```
+
+6. **Scheduling with Scheduled Tasks**:
+   Schedule VaultChron to run automatically every day using the registration script:
+   ```powershell
+   powershell.exe -ExecutionPolicy Bypass -File .\vaultchron\deploy\windows\register-task.ps1
+   ```
+   - `-Time`: Daily trigger time in `HH:mm` format (default: `"07:00"`, mirroring `deploy/vaultchron.timer`).
+   - `-TaskName`: Name for the Scheduled Task (default: `"VaultChron"`).
+   - `-Unregister`: Remove the task when no longer needed:
+     ```powershell
+     powershell.exe -ExecutionPolicy Bypass -File .\vaultchron\deploy\windows\register-task.ps1 -Unregister
+     ```
+   The registered task runs under your current user account with interactive logon (no administrative elevation or stored passwords required) and enables `StartWhenAvailable` to catch up on missed runs.
+
+7. **Log Location**:
+   When executed via the wrapper script (`deploy\windows\vaultchron-run.ps1`) or Scheduled Task, timestamped logs are written to:
+   `%LOCALAPPDATA%\vaultchron\logs\vaultchron.log`
 
 ### Via `go install`
 
@@ -193,7 +284,9 @@ VaultChron orchestrates a deterministic 7-stage pipeline:
 
 ## Deployment
 
-VaultChron can run unattended on a daily schedule using the provided systemd units in `deploy/`:
+VaultChron can run unattended on a daily schedule using the provided deployment scripts:
+
+### Linux & macOS (systemd)
 
 - **Execution wrapper (`deploy/vaultchron.sh`)**: Sources environment variables from `~/.config/vaultchron/env`, resolves the working directory via `VAULTCHRON_HOME` (defaulting to `/opt/vaultchron`), runs `vaultchron`, and logs stdout/stderr to `~/.config/vaultchron/logs/vaultchron.log`.
 - **Systemd service (`deploy/vaultchron.service`)**: Oneshot service unit invoking `vaultchron.sh`.
@@ -204,6 +297,17 @@ To set up the systemd timer:
 cp deploy/vaultchron.service deploy/vaultchron.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now vaultchron.timer
+```
+
+### Windows (Scheduled Tasks)
+
+- **Execution wrapper (`deploy/windows/vaultchron-run.ps1`)**: Sources environment variables from `%APPDATA%\vaultchron\env`, resolves the installation directory via `$env:VAULTCHRON_HOME` (defaulting to the archive root or `%LOCALAPPDATA%\vaultchron`), executes `vaultchron.exe`, and appends UTF-8 stdout/stderr to `%LOCALAPPDATA%\vaultchron\logs\vaultchron.log`.
+- **Task registration script (`deploy/windows/register-task.ps1`)**: Registers a Windows Scheduled Task executing daily at 07:00 (matching the systemd timer) with `StartWhenAvailable`, battery execution allowed, a 2-hour timeout, and interactive user logon without requiring administrator privileges.
+
+To register or unregister the Scheduled Task:
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1 -Unregister
 ```
 
 ## Security

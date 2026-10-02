@@ -42,6 +42,7 @@ All contributors and automated agents must verify changes against the full suite
 - **Context-Bound Process Execution:** Always execute subcommands with `exec.CommandContext` and reasonable bounded timeouts to prevent hanging processes.
 - **Atomic Vault Operations:** Target vaults contain live user documentation. File writes to notes and index files must be atomic (e.g. write to a temporary file in the same filesystem and rename) to eliminate corruption risks.
 - **UTF-8-Safe Truncation:** Commit diffs and LLM payloads must be truncated on rune boundaries rather than raw byte slices to avoid broken UTF-8 sequences.
+- **Platform-Specific Code & Portability:** Platform-specific code lives in build-tagged files (e.g. `lock_unix.go` / `lock_windows.go`); new code must build on Linux, macOS and Windows.
 
 ---
 

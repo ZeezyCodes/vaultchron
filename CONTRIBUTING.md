@@ -56,8 +56,9 @@ test -z "$(gofmt -l .)"
 # 2. Go vet
 go vet ./...
 
-# 3. Compilation check
+# 3. Compilation check (Linux and Windows cross-compilation)
 go build ./...
+GOOS=windows go build ./...
 
 # 4. Unit and race tests
 go test -race -cover ./...
@@ -71,6 +72,7 @@ $(go env GOPATH)/bin/govulncheck ./...
 
 ## Pull Request Expectations
 
+- **Cross-Platform Compatibility**: CI builds and tests on Linux, macOS, and Windows. All changes must keep `GOOS=windows go build ./...` green.
 - **Test Coverage**: Any new behavior or bug fix should include accompanying unit tests covering edge cases.
 - **Scope Containment**: Keep changes focused on the task at hand. Avoid unrelated refactorings or cosmetic formatting changes across untouched files.
 - **Clean Git History**: Avoid merge commits in PRs; rebase cleanly against the target base branch before submission.
