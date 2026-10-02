@@ -80,6 +80,45 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
+      - name: Parse-check PowerShell scripts and README snippets
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -Path "deploy/windows" -Filter "*.ps1"
+          if (-not $files -or $files.Count -eq 0) {
+            Write-Error "No PowerShell scripts found in deploy/windows"
+            exit 1
+          }
+          foreach ($file in $files) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors)
+            if ($errors -and $errors.Count -gt 0) {
+              Write-Error "Parse errors in $($file.FullName):"
+              $errors | ForEach-Object { Write-Error $_.ToString() }
+              exit 1
+            }
+            Write-Host "Parsed $($file.FullName): OK"
+          }
+
+          $readme = Get-Content -Raw "README.md"
+          $pattern = '(?ms)```powershell\s*\r?\n(.*?)```'
+          $matches = [regex]::Matches($readme, $pattern)
+          if ($matches.Count -eq 0) {
+            Write-Error "Zero powershell blocks found in README.md"
+            exit 1
+          }
+          Write-Host "Found $($matches.Count) powershell block(s) in README.md"
+          for ($i = 0; $i -lt $matches.Count; $i++) {
+            $code = $matches[$i].Groups[1].Value
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseInput($code, [ref]$null, [ref]$errors)
+            if ($errors -and $errors.Count -gt 0) {
+              Write-Error "Parse errors in README.md powershell block $($i + 1):"
+              $errors | ForEach-Object { Write-Error $_.ToString() }
+              exit 1
+            }
+            Write-Host "Parsed README powershell block $($i + 1): OK"
+          }
+
   macos:
     name: Build & Test (macOS)
     runs-on: macos-latest
