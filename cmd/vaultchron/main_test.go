@@ -12,7 +12,7 @@ import (
 
 // TestLockPathForUID verifies per-user lock path construction.
 func TestLockPathForUID(t *testing.T) {
-	tempDir := "/tmp"
+	tempDir := t.TempDir()
 	uid := 1000
 
 	path := lockPathForUID(tempDir, uid)
@@ -20,8 +20,8 @@ func TestLockPathForUID(t *testing.T) {
 	if path != expected {
 		t.Errorf("expected %q, got %q", expected, path)
 	}
-	if path == "/tmp/vaultchron.lock" {
-		t.Errorf("lock path should not literally be /tmp/vaultchron.lock")
+	if path == filepath.Join(tempDir, "vaultchron.lock") {
+		t.Errorf("lock path should not literally be fallback: %q", path)
 	}
 
 	// Test fallback when UID < 0 (Windows style)
