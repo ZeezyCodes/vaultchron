@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -147,9 +148,12 @@ func TestExpandPath(t *testing.T) {
 		{"", ""},
 		{"~", filepath.Clean(home)},
 		{"~/vault", filepath.Join(home, "vault")},
-		{`~\vault`, filepath.Join(home, "vault")},
 		{"$HOME/vault", filepath.Join(home, "vault")},
 		{"/static/path", "/static/path"},
+		{"$HOME", home},
+		{"${HOME}/vault", filepath.Join(home, "vault")},
+		{"~/", home},
+		{"$UNSET_XYZ/x", "/x"},
 	}
 
 	for _, tt := range tests {
@@ -158,6 +162,44 @@ func TestExpandPath(t *testing.T) {
 			t.Errorf("ExpandPath(%q) = %q; want %q", tt.input, got, tt.expected)
 		}
 	}
+
+	t.Run("env priority", func(t *testing.T) {
+		custom := t.TempDir()
+		t.Setenv("HOME", custom)
+		got := ExpandPath("$HOME/x")
+		want := filepath.Join(custom, "x")
+		if got != want {
+			t.Errorf("ExpandPath(\"$HOME/x\") = %q; want %q", got, want)
+		}
+	})
+
+	t.Run("windows fallback and backslash", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("skipping Windows-only test on non-windows platform")
+		}
+		t.Setenv("HOME", "")
+		gotHome := ExpandPath("$HOME/vault")
+		wantHome := filepath.Join(home, "vault")
+		if gotHome != wantHome {
+			t.Errorf("ExpandPath(\"$HOME/vault\") = %q; want %q", gotHome, wantHome)
+		}
+		gotBackslash := ExpandPath(`~\vault`)
+		wantBackslash := filepath.Join(home, "vault")
+		if gotBackslash != wantBackslash {
+			t.Errorf("ExpandPath(`~\\vault`) = %q; want %q", gotBackslash, wantBackslash)
+		}
+	})
+
+	t.Run("non-windows backslash unchanged", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("skipping non-Windows test on Windows")
+		}
+		got := ExpandPath(`~\vault`)
+		want := `~\vault`
+		if got != want {
+			t.Errorf("ExpandPath(`~\\vault`) = %q; want %q", got, want)
+		}
+	})
 }
 
 // TestLoad_DefaultsOmittedMaxDepth verifies that omitting max_depth in YAML gets the default value.

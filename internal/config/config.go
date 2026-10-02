@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -68,26 +69,25 @@ func ExpandPath(p string) string {
 	}
 	if p == "~" {
 		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Clean(filepath.FromSlash(home))
+			p = home
 		}
-		return p
-	}
-	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+	} else if strings.HasPrefix(p, "~/") || (runtime.GOOS == "windows" && strings.HasPrefix(p, `~\`)) {
 		if home, err := os.UserHomeDir(); err == nil {
-			remainder := strings.ReplaceAll(p[2:], "\\", "/")
-			return filepath.Clean(filepath.Join(home, filepath.FromSlash(remainder)))
+			p = filepath.Join(home, p[2:])
 		}
 	}
-	expanded := os.ExpandEnv(p)
-	if strings.HasPrefix(expanded, "$HOME") {
-		if home, err := os.UserHomeDir(); err == nil {
-			remainder := expanded[len("$HOME"):]
-			if strings.HasPrefix(remainder, "/") || strings.HasPrefix(remainder, `\`) {
-				remainder = remainder[1:]
+
+	expanded := os.Expand(p, func(k string) string {
+		if k == "HOME" && os.Getenv("HOME") == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				return home
 			}
-			remainder = strings.ReplaceAll(remainder, "\\", "/")
-			return filepath.Clean(filepath.Join(home, filepath.FromSlash(remainder)))
 		}
+		return os.Getenv(k)
+	})
+
+	if runtime.GOOS == "windows" && expanded != "" {
+		return filepath.Clean(expanded)
 	}
 	return expanded
 }

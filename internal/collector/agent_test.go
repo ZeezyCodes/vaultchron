@@ -3,6 +3,7 @@ package collector
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -14,6 +15,13 @@ func TestExpandPath(t *testing.T) {
 		t.Skip("skipping test: UserHomeDir unavailable")
 	}
 
+	expectedBackslash := `~\.antigravity`
+	expectedNested := `~\.poolside\logs`
+	if runtime.GOOS == "windows" {
+		expectedBackslash = filepath.Join(home, ".antigravity")
+		expectedNested = filepath.Join(home, ".poolside", "logs")
+	}
+
 	tests := []struct {
 		name     string
 		input    string
@@ -21,8 +29,8 @@ func TestExpandPath(t *testing.T) {
 	}{
 		{"bare tilde", "~", filepath.Clean(home)},
 		{"forward slash tilde", "~/.antigravity", filepath.Join(home, ".antigravity")},
-		{"backslash tilde", `~\.antigravity`, filepath.Join(home, ".antigravity")},
-		{"nested path", `~\.poolside\logs`, filepath.Join(home, ".poolside", "logs")},
+		{"backslash tilde", `~\.antigravity`, expectedBackslash},
+		{"nested path", `~\.poolside\logs`, expectedNested},
 		{"empty string", "", ""},
 	}
 
