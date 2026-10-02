@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,27 @@ func TestWriteFileAtomic(t *testing.T) {
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".tmp-") {
 			t.Errorf("temporary file was not cleaned up after overwrite: %s", entry.Name())
+		}
+	}
+}
+
+// TestWriteFileAtomic_RepeatedOverwrites verifies that writeFileAtomic handles
+// rapid successive writes and overwrites over existing files cleanly.
+func TestWriteFileAtomic_RepeatedOverwrites(t *testing.T) {
+	tempDir := t.TempDir()
+	targetFile := filepath.Join(tempDir, "rapid-notes", "note.md")
+
+	for i := 0; i < 5; i++ {
+		content := []byte(fmt.Sprintf("iteration %d content", i))
+		if err := writeFileAtomic(targetFile, content, 0o644); err != nil {
+			t.Fatalf("writeFileAtomic failed on iteration %d: %v", i, err)
+		}
+		read, err := os.ReadFile(targetFile)
+		if err != nil {
+			t.Fatalf("reading file failed on iteration %d: %v", i, err)
+		}
+		if string(read) != string(content) {
+			t.Errorf("content mismatch on iteration %d: got %q, want %q", i, string(read), string(content))
 		}
 	}
 }

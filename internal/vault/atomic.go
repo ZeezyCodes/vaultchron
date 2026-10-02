@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // writeFileAtomic writes data to a temporary file in the same directory as path,
@@ -45,8 +46,16 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("setting permissions on %s: %w", tmpName, err)
 	}
 
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("renaming %s to %s: %w", tmpName, path, err)
+	var renameErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		renameErr = os.Rename(tmpName, path)
+		if renameErr == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if renameErr != nil {
+		return fmt.Errorf("renaming %s to %s: %w", tmpName, path, renameErr)
 	}
 
 	cleanUp = false

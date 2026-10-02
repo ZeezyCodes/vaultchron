@@ -14,7 +14,12 @@ func TestDefaultConfig(t *testing.T) {
 		t.Fatal("DefaultConfig() returned nil")
 	}
 
-	expectedVault := os.ExpandEnv("$HOME/vault")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("skipping home dir check since UserHomeDir failed")
+	}
+
+	expectedVault := filepath.Join(home, "vault")
 	if cfg.Vault.Path != expectedVault {
 		t.Errorf("expected Vault.Path %q, got %q", expectedVault, cfg.Vault.Path)
 	}
@@ -22,7 +27,7 @@ func TestDefaultConfig(t *testing.T) {
 	if len(cfg.Scan.Roots) != 1 {
 		t.Fatalf("expected 1 scan root, got %d", len(cfg.Scan.Roots))
 	}
-	expectedRoot := os.ExpandEnv("$HOME/projects")
+	expectedRoot := filepath.Join(home, "projects")
 	if cfg.Scan.Roots[0] != expectedRoot {
 		t.Errorf("expected Scan.Roots[0] %q, got %q", expectedRoot, cfg.Scan.Roots[0])
 	}
@@ -35,12 +40,12 @@ func TestDefaultConfig(t *testing.T) {
 		t.Error("LLM.Waterfall is empty")
 	}
 
-	expectedAntigravity := os.ExpandEnv("$HOME/.antigravity")
+	expectedAntigravity := filepath.Join(home, ".antigravity")
 	if cfg.AgentLogs.AntigravityPath != expectedAntigravity {
 		t.Errorf("expected AntigravityPath %q, got %q", expectedAntigravity, cfg.AgentLogs.AntigravityPath)
 	}
 
-	expectedPoolside := os.ExpandEnv("$HOME/.poolside")
+	expectedPoolside := filepath.Join(home, ".poolside")
 	if cfg.AgentLogs.PoolsidePath != expectedPoolside {
 		t.Errorf("expected PoolsidePath %q, got %q", expectedPoolside, cfg.AgentLogs.PoolsidePath)
 	}
@@ -140,7 +145,9 @@ func TestExpandPath(t *testing.T) {
 		expected string
 	}{
 		{"", ""},
+		{"~", filepath.Clean(home)},
 		{"~/vault", filepath.Join(home, "vault")},
+		{`~\vault`, filepath.Join(home, "vault")},
 		{"$HOME/vault", filepath.Join(home, "vault")},
 		{"/static/path", "/static/path"},
 	}

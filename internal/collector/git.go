@@ -117,7 +117,7 @@ func DiscoverRepositories(ctx context.Context, roots []string, maxDepth int, exc
 			if err != nil {
 				return nil // not a valid git repo
 			}
-			gitDir := strings.TrimSpace(string(out))
+			gitDir := filepath.Clean(filepath.FromSlash(strings.TrimSpace(string(out))))
 			if gitDir == "" {
 				return nil
 			}
@@ -361,6 +361,7 @@ func rankPackages(nameOnlyOutput string) []string {
 		if fp == "" {
 			continue
 		}
+		fp = filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.ReplaceAll(fp, "\\", "/"))))
 		parts := strings.Split(fp, "/")
 		var pkg string
 		if len(parts) >= 2 {

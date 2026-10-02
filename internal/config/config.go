@@ -66,19 +66,27 @@ func ExpandPath(p string) string {
 	if p == "" {
 		return ""
 	}
-	if strings.HasPrefix(p, "~/") {
+	if p == "~" {
 		if home, err := os.UserHomeDir(); err == nil {
-			p = filepath.Join(home, p[2:])
+			return filepath.Clean(filepath.FromSlash(home))
 		}
-	} else if p == "~" {
+		return p
+	}
+	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
 		if home, err := os.UserHomeDir(); err == nil {
-			p = home
+			remainder := strings.ReplaceAll(p[2:], "\\", "/")
+			return filepath.Clean(filepath.Join(home, filepath.FromSlash(remainder)))
 		}
 	}
 	expanded := os.ExpandEnv(p)
 	if strings.HasPrefix(expanded, "$HOME") {
 		if home, err := os.UserHomeDir(); err == nil {
-			expanded = strings.Replace(expanded, "$HOME", home, 1)
+			remainder := expanded[len("$HOME"):]
+			if strings.HasPrefix(remainder, "/") || strings.HasPrefix(remainder, `\`) {
+				remainder = remainder[1:]
+			}
+			remainder = strings.ReplaceAll(remainder, "\\", "/")
+			return filepath.Clean(filepath.Join(home, filepath.FromSlash(remainder)))
 		}
 	}
 	return expanded
@@ -199,16 +207,28 @@ func Load(path string) (*Config, error) {
 
 // DefaultConfig returns a Config pre-populated with sensible generic defaults.
 func DefaultConfig() *Config {
+	home, _ := os.UserHomeDir()
+	vaultPath := filepath.Join(home, "vault")
+	rootsPath := filepath.Join(home, "projects")
+	antigravityPath := filepath.Join(home, ".antigravity")
+	poolsidePath := filepath.Join(home, ".poolside")
+	if home == "" {
+		vaultPath = os.ExpandEnv("$HOME/vault")
+		rootsPath = os.ExpandEnv("$HOME/projects")
+		antigravityPath = os.ExpandEnv("$HOME/.antigravity")
+		poolsidePath = os.ExpandEnv("$HOME/.poolside")
+	}
+
 	return &Config{
 		Vault: VaultConfig{
-			Path:        os.ExpandEnv("$HOME/vault"),
+			Path:        vaultPath,
 			IndexFile:   "00-Dev-Index.md",
 			RollupsDir:  "Daily-Rollups",
 			ProjectsDir: "Projects",
 			RecentDays:  7,
 		},
 		Scan: ScanConfig{
-			Roots:    []string{os.ExpandEnv("$HOME/projects")},
+			Roots:    []string{rootsPath},
 			MaxDepth: 3,
 			Excludes: []string{
 				".nvm", ".local", ".cache",
@@ -227,8 +247,8 @@ func DefaultConfig() *Config {
 		},
 		AgentLogs: AgentLogsConfig{
 			Enabled:         false,
-			AntigravityPath: os.ExpandEnv("$HOME/.antigravity"),
-			PoolsidePath:    os.ExpandEnv("$HOME/.poolside"),
+			AntigravityPath: antigravityPath,
+			PoolsidePath:    poolsidePath,
 		},
 		ProjectTags: map[string]ProjectTag{},
 	}

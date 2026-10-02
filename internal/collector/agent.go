@@ -64,13 +64,7 @@ func HarvestAgentContext(cfg config.AgentLogsConfig, since time.Time) (*AgentCon
 // expandPath expands a leading ~ to the user's home directory and expands
 // environment variables in the path.
 func expandPath(p string) string {
-	if strings.HasPrefix(p, "~") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			return filepath.Join(home, p[1:])
-		}
-	}
-	return os.ExpandEnv(p)
+	return config.ExpandPath(p)
 }
 
 // harvestFromDir walks a directory tree and extracts agent context from

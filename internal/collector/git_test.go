@@ -99,6 +99,11 @@ func TestRankPackages(t *testing.T) {
 			input:    "  internal/pkg/a.go  \n  internal/pkg/b.go  \n  \n  cmd/app/main.go  ",
 			expected: []string{"internal/pkg", "cmd/app"},
 		},
+		{
+			name:     "windows backslash paths",
+			input:    "internal\\pkg\\a.go\ninternal\\pkg\\b.go\ncmd\\app\\main.go",
+			expected: []string{"internal/pkg", "cmd/app"},
+		},
 	}
 
 	for _, tt := range tests {
