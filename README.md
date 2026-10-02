@@ -136,10 +136,15 @@ Follow these steps to configure and run VaultChron on Windows:
    ```powershell
    [Environment]::SetEnvironmentVariable('GOOGLE_API_KEY', 'your-api-key-here', 'User')
    ```
+   For the current session only, set a session variable:
+   ```powershell
+   $env:GOOGLE_API_KEY = 'your-api-key-here'
+   ```
    Alternatively, create the optional environment file at `%APPDATA%\vaultchron\env` with lines in `KEY=VALUE` format:
    ```text
    GOOGLE_API_KEY=your-api-key-here
    ```
+   The `%APPDATA%\vaultchron\env` file is read ONLY by `vaultchron-run.ps1` (and therefore the Scheduled Task); manual runs of `vaultchron.exe` need the user environment variable (new shell) or a session variable (`$env:GOOGLE_API_KEY = 'your-api-key-here'`).
 
 5. **Running Once by Hand**:
    Execute VaultChron directly from PowerShell:
@@ -161,7 +166,7 @@ Follow these steps to configure and run VaultChron on Windows:
      ```powershell
      powershell.exe -ExecutionPolicy Bypass -File .\vaultchron\deploy\windows\register-task.ps1 -Unregister
      ```
-   The registered task runs under your current user account with interactive logon (no administrative elevation or stored passwords required) and enables `StartWhenAvailable` to catch up on missed runs.
+   The registered task runs under your current user account with interactive logon (runs only while you are logged on; no password is stored). If the PC is off at the trigger time, it runs when available (`StartWhenAvailable`). The task stores the absolute path of the extracted folder, so keep the folder where it is or re-run `register-task.ps1` after moving it.
 
 7. **Log Location**:
    When executed via the wrapper script (`deploy\windows\vaultchron-run.ps1`) or Scheduled Task, timestamped logs are written to:
