@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - main
+      - 'feat/**' # Trigger CI on feature branches to ensure platform parity before PR
   pull_request:
     branches:
       - master
@@ -56,3 +57,47 @@ jobs:
 
       - name: Run govulncheck
         run: $(go env GOPATH)/bin/govulncheck ./...
+
+  windows:
+    name: Build & Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+
+      - name: Go build
+        run: go build -v ./...
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -v ./...
+
+  macos:
+    name: Build & Test (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+
+      - name: Go build
+        run: go build -v ./...
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -v ./...
