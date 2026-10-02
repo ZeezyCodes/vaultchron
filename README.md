@@ -47,18 +47,22 @@ VERSION="vX.Y.Z"
 OS="linux"   # "linux" or "darwin"
 ARCH="amd64" # "amd64" or "arm64"
 
-# Strip leading 'v' for archive asset naming
+# Archive names omit the leading 'v' of the tag
 VER_NUM="${VERSION#v}"
+ARCHIVE="vaultchron_${VER_NUM}_${OS}_${ARCH}.tar.gz"
+BASE_URL="https://github.com/ZeezyCodes/vaultchron/releases/download/${VERSION}"
 
-# Download release archive and checksums
-curl -fsSLO "https://github.com/ZeezyCodes/vaultchron/releases/download/${VERSION}/vaultchron_${VER_NUM}_${OS}_${ARCH}.tar.gz"
-curl -fsSLO "https://github.com/ZeezyCodes/vaultchron/releases/download/${VERSION}/checksums.txt"
+# Download the archive and the checksum list
+curl -fsSLO "${BASE_URL}/${ARCHIVE}"
+curl -fsSLO "${BASE_URL}/checksums.txt"
 
-# Verify SHA256 checksum (use shasum -a 256 on macOS if sha256sum is unavailable)
-sha256sum --ignore-missing -c checksums.txt
+# Verify the archive you downloaded (run the line for your platform)
+grep -F "  ${ARCHIVE}" checksums.txt | sha256sum -c -        # Linux
+grep -F "  ${ARCHIVE}" checksums.txt | shasum -a 256 -c -    # macOS
 
-# Extract archive (contains vaultchron, vaultchron_migrate, config.example.yaml, deploy/, and LICENSE)
-tar -xzf "vaultchron_${VER_NUM}_${OS}_${ARCH}.tar.gz"
+# Extract into its own directory (the archive has no top-level folder)
+mkdir -p vaultchron && tar -xzf "${ARCHIVE}" -C vaultchron
+cd vaultchron && ./vaultchron -version
 ```
 
 > [!NOTE]
@@ -70,7 +74,7 @@ tar -xzf "vaultchron_${VER_NUM}_${OS}_${ARCH}.tar.gz"
 
 > [!IMPORTANT]
 > **Windows Support:**
-> Prebuilt Windows binaries are not currently provided because VaultChron's advisory file locking (`syscall.Flock`) and process lifecycle management are Unix-specific.
+> Prebuilt Windows binaries are not currently provided: VaultChron's advisory file locking uses `syscall.Flock`, which is Unix-only, so the project does not currently build for Windows.
 
 ### Via `go install`
 
