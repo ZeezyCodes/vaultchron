@@ -78,8 +78,15 @@ $ErrorActionPreference = "Continue"
 $configFile = Join-Path $installDir "config.yaml"
 $LASTEXITCODE = 0
 
-& $exePath -config $configFile 2>&1 | Out-File -LiteralPath $logFile -Append -Encoding utf8
+# PowerShell 5.1 decodes native output with the OEM code page and wraps stderr
+# in ErrorRecord objects. Ensure UTF-8 decoding and convert output to plain text strings.
+$prevEnc = [Console]::OutputEncoding
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+
+& $exePath -config $configFile 2>&1 | ForEach-Object { "$_" } | Out-File -LiteralPath $logFile -Append -Encoding utf8
 $exitCode = $LASTEXITCODE
+
+try { [Console]::OutputEncoding = $prevEnc } catch { }
 
 $ErrorActionPreference = $prevEAP
 Set-Location -LiteralPath $prevLocation
