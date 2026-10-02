@@ -85,11 +85,12 @@ jobs:
         if: always()
         run: |
           $ErrorActionPreference = 'Stop'
-          $files = @(Get-ChildItem -Path "deploy/windows" -Filter "*.ps1") + @(Get-Item "install.ps1")
-          if (-not $files -or $files.Count -eq 0) {
+          $files = @(Get-ChildItem -Path "deploy/windows" -Filter "*.ps1")
+          if ($files.Count -eq 0) {
             Write-Error "No PowerShell scripts found in deploy/windows"
             exit 1
           }
+          $files = $files + @(Get-Item "install.ps1")
           foreach ($file in $files) {
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors)
