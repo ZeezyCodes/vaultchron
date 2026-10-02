@@ -214,13 +214,18 @@ Follow these steps to configure and run VaultChron on Windows:
 6. **Scheduling with Scheduled Tasks**:
    Schedule VaultChron to run automatically every day using the registration script:
    ```powershell
-   powershell.exe -ExecutionPolicy Bypass -File .\vaultchron\deploy\windows\register-task.ps1
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\vaultchron\deploy\windows\register-task.ps1
    ```
+
+   > [!NOTE]
+   > Scripts extracted from a downloaded zip can be blocked by PowerShell with the message 'is not digitally signed'. Running them through `powershell.exe -ExecutionPolicy Bypass -File` as above avoids that for this one run only.
+   > You can instead unblock the extracted folder once by running `Get-ChildItem -Recurse . | Unblock-File` from inside it. The Scheduled Task already starts the wrapper with `-ExecutionPolicy Bypass`.
+
    - `-Time`: Daily trigger time in `HH:mm` format (default: `"07:00"`, mirroring `deploy/vaultchron.timer`).
    - `-TaskName`: Name for the Scheduled Task (default: `"VaultChron"`).
    - `-Unregister`: Remove the task when no longer needed:
      ```powershell
-     powershell.exe -ExecutionPolicy Bypass -File .\vaultchron\deploy\windows\register-task.ps1 -Unregister
+     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\vaultchron\deploy\windows\register-task.ps1 -Unregister
      ```
    The registered task runs under your current user account with interactive logon (runs only while you are logged on; no password is stored). If the PC is off at the trigger time, it runs when available (`StartWhenAvailable`). The task stores the absolute path of the extracted folder, so keep the folder where it is or re-run `register-task.ps1` after moving it.
 
@@ -367,8 +372,8 @@ systemctl --user enable --now vaultchron.timer
 
 To register or unregister the Scheduled Task:
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1
-powershell.exe -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1 -Unregister
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1 -Unregister
 ```
 
 ## Security
