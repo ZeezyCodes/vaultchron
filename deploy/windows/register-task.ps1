@@ -45,22 +45,27 @@ if (-not (Test-Path -LiteralPath $wrapper)) {
 }
 $wrapperPath = [System.IO.Path]::GetFullPath($wrapper)
 
-# Build action: powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<wrapper>"
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$wrapperPath`""
+# Validate -Time before building the trigger.
+$parsed = [datetime]::MinValue; if (-not [datetime]::TryParseExact($Time, 'HH:mm', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) { Write-Error "Invalid -Time '$Time'. Use 24-hour HH:mm, e.g. 07:00."; exit 1 }
+
+# Build action: powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "<wrapper>"
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$wrapperPath`""
 
 # Build daily trigger at specified time.
-$trigger = New-ScheduledTaskTrigger -Daily -At $Time
+$trigger = New-ScheduledTaskTrigger -Daily -At $parsed
 
 # Configure settings: StartWhenAvailable (catch up missed runs), allow start on battery, 2-hour execution limit.
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 
 # Principal: current user with Interactive logon (no admin elevation, no stored password).
-$currentUser = $env:USERNAME
+$currentUser = "$env:USERDOMAIN\$env:USERNAME"
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive
 
 # Register scheduled task.
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
 
 Write-Host "Scheduled task '$TaskName' registered successfully (Daily at $Time)."
+Write-Host "Wrapper path: $wrapperPath"
+Write-Host "The task points at this folder; if you move it, re-run this script."
 Write-Host "To run it now manually: Start-ScheduledTask -TaskName '$TaskName'"
 Write-Host "To check results:        Get-ScheduledTaskInfo -TaskName '$TaskName'"
