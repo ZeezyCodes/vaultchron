@@ -35,15 +35,60 @@ builds:
       - amd64
       - arm64
 
+  - id: vaultchron_windows
+    main: ./cmd/vaultchron
+    binary: vaultchron
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version=v{{.Version}}
+    goos:
+      - windows
+    goarch:
+      - amd64
+
+  - id: vaultchron_migrate_windows
+    main: ./cmd/vaultchron_migrate
+    binary: vaultchron_migrate
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version=v{{.Version}}
+    goos:
+      - windows
+    goarch:
+      - amd64
+
 archives:
-  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: unix
+    ids:
+      - vaultchron
+      - vaultchron_migrate
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     files:
       - LICENSE
       - README.md
       - config.example.yaml
-      - deploy/*
+      - deploy/*.*
+
+  - id: windows
+    ids:
+      - vaultchron_windows
+      - vaultchron_migrate_windows
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - zip
+    files:
+      - LICENSE
+      - README.md
+      - config.example.yaml
+      - deploy/windows/*
 
 checksum:
   name_template: "checksums.txt"
