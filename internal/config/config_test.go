@@ -141,6 +141,13 @@ func TestExpandPath(t *testing.T) {
 		t.Skip("UserHomeDir unavailable")
 	}
 
+	cleanOnWindows := func(want string) string {
+		if runtime.GOOS == "windows" {
+			return filepath.Clean(want)
+		}
+		return want
+	}
+
 	tests := []struct {
 		input    string
 		expected string
@@ -149,11 +156,11 @@ func TestExpandPath(t *testing.T) {
 		{"~", filepath.Clean(home)},
 		{"~/vault", filepath.Join(home, "vault")},
 		{"$HOME/vault", filepath.Join(home, "vault")},
-		{"/static/path", "/static/path"},
+		{"/static/path", cleanOnWindows("/static/path")},
 		{"$HOME", home},
 		{"${HOME}/vault", filepath.Join(home, "vault")},
 		{"~/", home},
-		{"$UNSET_XYZ/x", "/x"},
+		{"$UNSET_XYZ/x", cleanOnWindows("/x")},
 	}
 
 	for _, tt := range tests {
