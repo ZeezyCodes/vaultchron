@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -46,13 +47,19 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("setting permissions on %s: %w", tmpName, err)
 	}
 
+	attempts := 1
+	if runtime.GOOS == "windows" {
+		attempts = 5
+	}
 	var renameErr error
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; attempt < attempts; attempt++ {
 		renameErr = os.Rename(tmpName, path)
 		if renameErr == nil {
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		if attempt < attempts-1 {
+			time.Sleep(20 * time.Millisecond)
+		}
 	}
 	if renameErr != nil {
 		return fmt.Errorf("renaming %s to %s: %w", tmpName, path, renameErr)
