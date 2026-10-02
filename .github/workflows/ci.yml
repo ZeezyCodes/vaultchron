@@ -80,7 +80,9 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
+      # Report parse results even when tests fail.
       - name: Parse-check PowerShell scripts and README snippets
+        if: always()
         run: |
           $ErrorActionPreference = 'Stop'
           $files = Get-ChildItem -Path "deploy/windows" -Filter "*.ps1"
