@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -100,36 +101,64 @@ func main() {
 // It is separated from main() so that the advisory lock can be released
 // via defer before os.Exit is called.
 func run() int {
-	versionFlag := flag.Bool("version", false, "print version and exit")
-	configPath := flag.String("config", "", "path to config.yaml (defaults to config.yaml or config.example.yaml)")
-	scanMode := flag.Bool("scan", false, "run collector only: discover repos, harvest metadata, print results, and exit 0")
-	window := flag.String("window", "24.hours.ago", "git time window for --since log query and HEAD@{<window>} diff reference")
-	dryRun := flag.Bool("dry-run", false, "skip LLM calls and vault writes; render populated DevlogData preview to stdout")
-	repoFilter := flag.String("repo", "", "target a single repository by base directory name (e.g. my-project)")
-	force := flag.Bool("force", false, "process repositories even if they have zero commits in the window")
-	migrateVault := flag.Bool("migrate-vault", false, "migrate legacy devlog notes in vault to v3 callout taxonomy in-place")
-	migrateV3 := flag.Bool("migrate-v3", false, "alias for -migrate-vault")
-	flag.Parse()
+	return runWithArgs(os.Args[1:], os.Stdout, os.Stderr, time.Now, time.Local)
+}
+
+// runWithArgs executes vaultchron with the provided arguments, streams, clock, and location.
+func runWithArgs(args []string, stdout, stderr io.Writer, nowFunc func() time.Time, loc *time.Location) int {
+	if nowFunc == nil {
+		nowFunc = time.Now
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+
+	fs := flag.NewFlagSet("vaultchron", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	versionFlag := fs.Bool("version", false, "print version and exit")
+	configPath := fs.String("config", "", "path to config.yaml (defaults to config.yaml or config.example.yaml)")
+	scanMode := fs.Bool("scan", false, "run collector only: discover repos, harvest metadata, print results, and exit 0")
+	window := fs.String("window", "24.hours.ago", "git time window for --since log query and HEAD@{<window>} diff reference")
+	dryRun := fs.Bool("dry-run", false, "skip LLM calls and vault writes; render populated DevlogData preview to stdout")
+	repoFilter := fs.String("repo", "", "target a single repository by base directory name (e.g. my-project)")
+	force := fs.Bool("force", false, "process repositories even if they have zero commits in the window")
+	migrateVault := fs.Bool("migrate-vault", false, "migrate legacy devlog notes in vault to v3 callout taxonomy in-place")
+	migrateV3 := fs.Bool("migrate-v3", false, "alias for -migrate-vault")
+	dateFlag := fs.String("date", "", "single calendar day to generate devlog for (YYYY-MM-DD)")
+	fromFlag := fs.String("from", "", "start date for devlog range (YYYY-MM-DD)")
+	toFlag := fs.String("to", "", "end date for devlog range (YYYY-MM-DD, defaults to yesterday)")
+	catchUpFlag := fs.Int("catch-up", 0, "number of catch-up days in default day mode")
+	maxCallsFlag := fs.Int("max-calls", -1, "maximum LLM calls allowed per run (0 = unlimited)")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	if *versionFlag {
-		fmt.Println("vaultchron " + getVersion())
+		fmt.Fprintln(stdout, "vaultchron "+getVersion())
 		return 0
 	}
 
-	if !validWindowRegex.MatchString(*window) {
-		fmt.Fprintf(os.Stderr, "invalid -window %q: expected format like <number>.(hours|days|weeks|minutes).ago (e.g. 24.hours.ago)\n", *window)
+	visited := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+
+	if visited["window"] && !validWindowRegex.MatchString(*window) {
+		fmt.Fprintf(stderr, "invalid -window %q: expected format like <number>.(hours|days|weeks|minutes).ago (e.g. 24.hours.ago)\n", *window)
 		return 1
 	}
 
 	// Resolve config path: explicit flag > config.yaml > config.example.yaml.
 	cfgPath := config.ResolveConfigPath(*configPath)
 	if *configPath == "" && cfgPath == "config.example.yaml" {
-		fmt.Fprintln(os.Stderr, "[INFO] config.yaml not found, falling back to config.example.yaml")
+		fmt.Fprintln(stderr, "[INFO] config.yaml not found, falling back to config.example.yaml")
 	}
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
+		fmt.Fprintf(stderr, "error loading config: %v\n", err)
 		return 1
 	}
 
@@ -138,29 +167,50 @@ func run() int {
 		if vaultPath == "" {
 			vaultPath = config.DefaultConfig().Vault.Path
 		}
-		fmt.Printf("Migrating legacy devlogs in vault: %s\n", vaultPath)
+		fmt.Fprintf(stdout, "Migrating legacy devlogs in vault: %s\n", vaultPath)
 		modified, err := vault.MigrateVault(vaultPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error migrating vault: %v\n", err)
+			fmt.Fprintf(stderr, "error migrating vault: %v\n", err)
 			return 1
 		}
-		fmt.Printf("Migration complete. Successfully updated %d note(s) to v3 callouts.\n", len(modified))
+		fmt.Fprintf(stdout, "Migration complete. Successfully updated %d note(s) to v3 callouts.\n", len(modified))
 		return 0
 	}
 
-	if *scanMode {
-		return runScan(cfg, *window)
-	}
-
-	// Standard pipeline execution (includes dry-run mode when -dry-run is set).
+	now := nowFunc()
 	opts := pipeline.PipelineOptions{
 		Window:     *window,
+		IsWindow:   visited["window"],
+		Date:       *dateFlag,
+		From:       *fromFlag,
+		To:         *toFlag,
+		CatchUp:    *catchUpFlag,
+		MaxCalls:   *maxCallsFlag,
 		RepoFilter: *repoFilter,
 		Force:      *force,
 		DryRun:     *dryRun,
+		Scan:       *scanMode,
+		Now:        nowFunc,
+		Loc:        loc,
+		Visited:    visited,
 	}
-	if err := pipeline.Run(cfg, opts); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+
+	plan, err := pipeline.ResolvePlan(opts, cfg, now, loc)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	if plan.IsLegacyWindow && plan.Scan {
+		return runScan(cfg, plan.Window)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	_, _, err = pipeline.RunPlan(ctx, cfg, plan)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 	return 0
