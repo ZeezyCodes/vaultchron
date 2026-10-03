@@ -988,3 +988,384 @@ func TestPipeline_InvalidFlagCombinations(t *testing.T) {
 		})
 	}
 }
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+
+	fn()
+
+	_ = w.Close()
+	os.Stderr = old
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stderr: %v", err)
+	}
+	return string(out)
+}
+
+func TestPipeline_IndexMissing(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	days := []string{"2026-09-29", "2026-09-30"}
+	for _, d := range days {
+		fPath := filepath.Join(repoDir, fmt.Sprintf("file_%s.txt", d))
+		if err := os.WriteFile(fPath, []byte("content on "+d+"\n"), 0o644); err != nil {
+			t.Fatalf("writing file: %v", err)
+		}
+		runGit(nil, "add", filepath.Base(fPath))
+		runGit([]string{
+			fmt.Sprintf("GIT_AUTHOR_DATE=%sT10:00:00-05:00", d),
+			fmt.Sprintf("GIT_COMMITTER_DATE=%sT10:00:00-05:00", d),
+		}, "commit", "-m", "Commit on "+d)
+	}
+
+	ts, reqs := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	plan, err := ResolvePlan(PipelineOptions{
+		From:    "2026-09-29",
+		To:      "2026-09-30",
+		Visited: map[string]bool{"from": true, "to": true},
+		Now:     func() time.Time { return now },
+		Loc:     loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan: %v", err)
+	}
+
+	var rows []DayResultRow
+	var counts DaySummaryCounts
+	var runErr error
+
+	captured := captureStderr(t, func() {
+		rows, counts, runErr = RunPlan(context.Background(), cfg, plan)
+	})
+
+	if runErr != nil {
+		t.Fatalf("RunPlan failed: %v", runErr)
+	}
+	if counts.Errors != 0 {
+		t.Errorf("expected 0 errors, got %d", counts.Errors)
+	}
+	if counts.Written != 2 {
+		t.Errorf("expected 2 written, got %d", counts.Written)
+	}
+	for _, r := range rows {
+		if r.Status != "WRITTEN" {
+			t.Errorf("row for %s status = %q, want WRITTEN", r.Date, r.Status)
+		}
+	}
+
+	warnLine := fmt.Sprintf("[WARN] index file %s not found; notes are written but the index is not updated",
+		filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile))
+	if strings.Count(captured, warnLine) != 1 {
+		t.Errorf("expected warning printed exactly once, got %d times in stderr:\n%s",
+			strings.Count(captured, warnLine), captured)
+	}
+
+	// Verify notes written on disk
+	projectName := collector.ProjectName(repoDir)
+	for _, d := range days {
+		exists, _, _ := vault.DevlogExists(cfg.Vault.Path, projectName, d)
+		if !exists {
+			t.Errorf("expected devlog note for %s to exist on disk", d)
+		}
+	}
+
+	// Rerun gives zero new LLM requests and SKIPPED rows
+	initialReqs := len(*reqs)
+	rowsRerun, countsRerun, errRerun := RunPlan(context.Background(), cfg, plan)
+	if errRerun != nil {
+		t.Fatalf("rerun failed: %v", errRerun)
+	}
+	if len(*reqs) != initialReqs {
+		t.Errorf("expected zero new LLM requests on rerun, got %d (was %d)", len(*reqs), initialReqs)
+	}
+	if countsRerun.Skipped != 2 {
+		t.Errorf("expected 2 skipped on rerun, got %d", countsRerun.Skipped)
+	}
+	for _, r := range rowsRerun {
+		if r.Status != "SKIPPED" {
+			t.Errorf("rerun row for %s status = %q, want SKIPPED", r.Date, r.Status)
+		}
+	}
+}
+
+func TestPipeline_IndexBroken(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	days := []string{"2026-09-28", "2026-09-29", "2026-09-30"}
+	for _, d := range days {
+		fPath := filepath.Join(repoDir, fmt.Sprintf("file_%s.txt", d))
+		if err := os.WriteFile(fPath, []byte("content on "+d+"\n"), 0o644); err != nil {
+			t.Fatalf("writing file: %v", err)
+		}
+		runGit(nil, "add", filepath.Base(fPath))
+		runGit([]string{
+			fmt.Sprintf("GIT_AUTHOR_DATE=%sT10:00:00-05:00", d),
+			fmt.Sprintf("GIT_COMMITTER_DATE=%sT10:00:00-05:00", d),
+		}, "commit", "-m", "Commit on "+d)
+	}
+
+	ts, reqs := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	indexPath := filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile)
+	if err := os.WriteFile(indexPath, []byte("# Index\n"), 0o644); err != nil {
+		t.Fatalf("writing broken index: %v", err)
+	}
+
+	plan, err := ResolvePlan(PipelineOptions{
+		From:    "2026-09-28",
+		To:      "2026-09-30",
+		Visited: map[string]bool{"from": true, "to": true},
+		Now:     func() time.Time { return now },
+		Loc:     loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan: %v", err)
+	}
+
+	rows, counts, runErr := RunPlan(context.Background(), cfg, plan)
+	if runErr == nil {
+		t.Fatal("expected RunPlan to return an error when index update fails, got nil")
+	}
+	if len(*reqs) != 1 {
+		t.Fatalf("expected exactly 1 LLM request, got %d", len(*reqs))
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(rows))
+	}
+
+	// First row ERROR
+	if rows[0].Status != "ERROR" {
+		t.Errorf("row 0 status = %q, want ERROR", rows[0].Status)
+	}
+	if !strings.Contains(rows[0].Output, "index update failed:") || !strings.Contains(rows[0].Output, "; note not written") {
+		t.Errorf("row 0 output unexpected: %q", rows[0].Output)
+	}
+
+	// Other two rows PENDING with index reason
+	for i := 1; i <= 2; i++ {
+		if rows[i].Status != "PENDING" {
+			t.Errorf("row %d status = %q, want PENDING", i, rows[i].Status)
+		}
+		if rows[i].Output != "not attempted: index update failed earlier in this run" {
+			t.Errorf("row %d output = %q, want 'not attempted: index update failed earlier in this run'", i, rows[i].Output)
+		}
+	}
+
+	if counts.Errors != 1 {
+		t.Errorf("counts.Errors = %d, want 1", counts.Errors)
+	}
+	if counts.Pending != 2 || counts.IndexPending != 2 {
+		t.Errorf("counts.Pending = %d, counts.IndexPending = %d, want 2", counts.Pending, counts.IndexPending)
+	}
+
+	// NO note files exist
+	projectName := collector.ProjectName(repoDir)
+	for _, d := range days {
+		exists, _, _ := vault.DevlogExists(cfg.Vault.Path, projectName, d)
+		if exists {
+			t.Errorf("note for %s should not exist after index failure", d)
+		}
+	}
+
+	// Replace index with valid one
+	validIndex := "# Developer Index\n\n## Recent Dev Logs\n\n## Projects\n"
+	if err := os.WriteFile(indexPath, []byte(validIndex), 0o644); err != nil {
+		t.Fatalf("writing valid index: %v", err)
+	}
+
+	// Rerun
+	rowsRerun, countsRerun, errRerun := RunPlan(context.Background(), cfg, plan)
+	if errRerun != nil {
+		t.Fatalf("rerun failed: %v", errRerun)
+	}
+	if countsRerun.Written != 3 {
+		t.Errorf("countsRerun.Written = %d, want 3", countsRerun.Written)
+	}
+	if len(rowsRerun) != 3 {
+		t.Fatalf("rerun rows count = %d, want 3", len(rowsRerun))
+	}
+	for _, r := range rowsRerun {
+		if r.Status != "WRITTEN" {
+			t.Errorf("rerun row %s status = %q, want WRITTEN", r.Date, r.Status)
+		}
+	}
+
+	// 3 notes written on disk
+	for _, d := range days {
+		exists, _, _ := vault.DevlogExists(cfg.Vault.Path, projectName, d)
+		if !exists {
+			t.Errorf("expected note for %s to exist after rerun", d)
+		}
+	}
+
+	// 3 index rows in date-descending order
+	indexContentBytes, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("reading index file: %v", err)
+	}
+	indexContent := string(indexContentBytes)
+	idx30 := strings.Index(indexContent, "2026-09-30")
+	idx29 := strings.Index(indexContent, "2026-09-29")
+	idx28 := strings.Index(indexContent, "2026-09-28")
+	if idx30 == -1 || idx29 == -1 || idx28 == -1 {
+		t.Fatalf("missing dates in index file:\n%s", indexContent)
+	}
+	if !(idx30 < idx29 && idx29 < idx28) {
+		t.Errorf("expected dates in descending order (2026-09-30, then 2026-09-29, then 2026-09-28), got positions: %d, %d, %d",
+			idx30, idx29, idx28)
+	}
+}
+
+func TestPipeline_BrokenIndex_DryRun(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	fPath := filepath.Join(repoDir, "file_2026-09-30.txt")
+	if err := os.WriteFile(fPath, []byte("content\n"), 0o644); err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+	runGit(nil, "add", filepath.Base(fPath))
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-09-30T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-09-30T10:00:00-05:00",
+	}, "commit", "-m", "Commit on 2026-09-30")
+
+	ts, reqs := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	indexPath := filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile)
+	if err := os.WriteFile(indexPath, []byte("# Index\n"), 0o644); err != nil {
+		t.Fatalf("writing broken index: %v", err)
+	}
+
+	plan, err := ResolvePlan(PipelineOptions{
+		Date:    "2026-09-30",
+		DryRun:  true,
+		Visited: map[string]bool{"date": true},
+		Now:     func() time.Time { return now },
+		Loc:     loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan: %v", err)
+	}
+
+	rows, counts, runErr := RunPlan(context.Background(), cfg, plan)
+	if runErr != nil {
+		t.Fatalf("dry-run should not fail on broken index, got: %v", runErr)
+	}
+	if len(*reqs) != 0 {
+		t.Errorf("expected 0 LLM requests in dry-run, got %d", len(*reqs))
+	}
+	if counts.Errors != 0 {
+		t.Errorf("counts.Errors = %d, want 0", counts.Errors)
+	}
+	if counts.Written != 1 {
+		t.Errorf("counts.Written = %d, want 1", counts.Written)
+	}
+	if len(rows) != 1 || rows[0].Status != "WOULD WRITE" {
+		t.Errorf("unexpected rows: %v", rows)
+	}
+
+	// Verify zero writes: only index file in vault
+	files := hashVaultFiles(t, cfg.Vault.Path)
+	if len(files) != 1 || files[cfg.Vault.IndexFile] == "" {
+		t.Errorf("expected only index file in vault, got: %v", files)
+	}
+}
+
+func TestFormatDaySummaryLine(t *testing.T) {
+	tests := []struct {
+		name   string
+		counts DaySummaryCounts
+		dryRun bool
+		want   string
+	}{
+		{
+			name: "clean written",
+			counts: DaySummaryCounts{
+				Written: 2,
+				Skipped: 1,
+				Pending: 0,
+				Errors:  0,
+			},
+			dryRun: false,
+			want:   "2 written, 1 skipped, 0 pending, 0 errors",
+		},
+		{
+			name: "cap pending only",
+			counts: DaySummaryCounts{
+				Written:    1,
+				Skipped:    0,
+				Pending:    2,
+				CapPending: 2,
+				Errors:     0,
+			},
+			dryRun: false,
+			want:   "1 written, 0 skipped, 2 pending (call cap reached; run again to continue), 0 errors",
+		},
+		{
+			name: "index pending only",
+			counts: DaySummaryCounts{
+				Written:      0,
+				Skipped:      0,
+				Pending:      2,
+				IndexPending: 2,
+				Errors:       1,
+			},
+			dryRun: false,
+			want:   "0 written, 0 skipped, 2 pending (index error; fix the index and run again), 1 errors",
+		},
+		{
+			name: "both cap pending and index pending",
+			counts: DaySummaryCounts{
+				Written:      1,
+				Skipped:      0,
+				Pending:      3,
+				CapPending:   1,
+				IndexPending: 2,
+				Errors:       1,
+			},
+			dryRun: false,
+			want:   "1 written, 0 skipped, 3 pending (call cap reached; run again to continue) (index error; fix the index and run again), 1 errors",
+		},
+		{
+			name: "dry run with cap pending",
+			counts: DaySummaryCounts{
+				Written:    2,
+				Skipped:    0,
+				Pending:    1,
+				CapPending: 1,
+				Errors:     0,
+			},
+			dryRun: true,
+			want:   "2 would be written, 0 skipped, 1 pending (call cap reached; run again to continue), 0 errors",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatDaySummaryLine(tt.counts, tt.dryRun)
+			if got != tt.want {
+				t.Errorf("FormatDaySummaryLine() =\n%q\nwant:\n%q", got, tt.want)
+			}
+		})
+	}
+}

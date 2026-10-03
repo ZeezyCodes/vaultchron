@@ -2,7 +2,9 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,11 +274,30 @@ type DayResultRow struct {
 
 // DaySummaryCounts summarizes counts for day mode.
 type DaySummaryCounts struct {
-	Written     int
-	Skipped     int
-	Pending     int
-	Errors      int
-	ZeroCommits int
+	Written      int
+	Skipped      int
+	Pending      int
+	CapPending   int
+	IndexPending int
+	Errors       int
+	ZeroCommits  int
+}
+
+// FormatDaySummaryLine formats the summary line text for day mode.
+func FormatDaySummaryLine(counts DaySummaryCounts, dryRun bool) string {
+	writtenWord := "written"
+	if dryRun {
+		writtenWord = "would be written"
+	}
+	var suffixes string
+	if counts.CapPending > 0 {
+		suffixes += " (call cap reached; run again to continue)"
+	}
+	if counts.IndexPending > 0 {
+		suffixes += " (index error; fix the index and run again)"
+	}
+	return fmt.Sprintf("%d %s, %d skipped, %d pending%s, %d errors",
+		counts.Written, writtenWord, counts.Skipped, counts.Pending, suffixes, counts.Errors)
 }
 
 // Run executes the devlog generation pipeline.
@@ -545,6 +566,23 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 	var rows []DayResultRow
 	var counts DaySummaryCounts
 	llmCallsCount := 0
+	indexChecked := false
+	indexEnabled := true
+	indexBroken := false
+
+	checkIndex := func() {
+		if indexChecked {
+			return
+		}
+		indexChecked = true
+		indexPath := filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile)
+		if _, err := os.Stat(indexPath); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				indexEnabled = false
+				fmt.Fprintf(os.Stderr, "[WARN] index file %s not found; notes are written but the index is not updated\n", indexPath)
+			}
+		}
+	}
 
 	// Day-major processing: for each day, for each repo
 	for _, dayWindow := range plan.Days {
@@ -612,6 +650,7 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 					Output:  "call cap reached",
 				})
 				counts.Pending++
+				counts.CapPending++
 				continue
 			}
 
@@ -635,6 +674,21 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 				llmCallsCount++ // cap applies to dry-run plan
 				continue
 			}
+
+			if indexBroken {
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  "PENDING",
+					Commits: commitsStr,
+					Output:  "not attempted: index update failed earlier in this run",
+				})
+				counts.Pending++
+				counts.IndexPending++
+				continue
+			}
+
+			checkIndex()
 
 			// Real run: call LLM
 			llmCallsCount++ // every attempt counts, including failures
@@ -670,6 +724,22 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 				Partial:      dayWindow.Partial,
 			}
 
+			if indexEnabled {
+				if idxErr := vault.UpdateIndex(cfg.Vault, &devlogData); idxErr != nil {
+					fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): index update failed: %v\n", projName, day, idxErr)
+					rows = append(rows, DayResultRow{
+						Repo:    projName,
+						Date:    day,
+						Status:  "ERROR",
+						Commits: commitsStr,
+						Output:  fmt.Sprintf("index update failed: %v; note not written", idxErr),
+					})
+					counts.Errors++
+					indexBroken = true
+					continue
+				}
+			}
+
 			notePath, writeErr := vault.WriteDevlog(cfg.Vault.Path, meta.Name, day, devlogData)
 			if writeErr != nil {
 				fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): write failed: %v\n", projName, day, writeErr)
@@ -689,10 +759,6 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 				relPath = expectedRelPath
 			}
 
-			if idxErr := vault.UpdateIndex(cfg.Vault, &devlogData); idxErr != nil {
-				fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): index update failed: %v\n", projName, day, idxErr)
-			}
-
 			rows = append(rows, DayResultRow{
 				Repo:    projName,
 				Date:    day,
@@ -706,20 +772,7 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 
 	printDaySummaryTable(rows)
 
-	var writtenWord string
-	if plan.DryRun {
-		writtenWord = "would be written"
-	} else {
-		writtenWord = "written"
-	}
-
-	if counts.Pending > 0 {
-		fmt.Printf("\n%d %s, %d skipped, %d pending (call cap reached; run again to continue), %d errors\n",
-			counts.Written, writtenWord, counts.Skipped, counts.Pending, counts.Errors)
-	} else {
-		fmt.Printf("\n%d %s, %d skipped, %d pending, %d errors\n",
-			counts.Written, writtenWord, counts.Skipped, counts.Pending, counts.Errors)
-	}
+	fmt.Printf("\n%s\n", FormatDaySummaryLine(counts, plan.DryRun))
 	fmt.Printf("%d repo-days had no commits\n", counts.ZeroCommits)
 
 	if counts.Errors > 0 {
