@@ -356,6 +356,73 @@ func TestUpdateIndex_SortedTableDriven(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "section with leading plain bullet followed by plain entries uses plain style",
+			setupIndex: `# Index
+## Recent Activity
+
+- manual note
+[[Projects/AcmeWidgets.com/Devlog/2026-10-02|2026-10-02]] — Older
+`,
+			updates: []*DevlogData{
+				{
+					ProjectName:  "AcmeWidgets.com",
+					Date:         "2026-10-04",
+					Content:      "**Newer**",
+					CommitsCount: 1,
+				},
+			},
+			verify: func(t *testing.T, indexPath string, raw []byte) {
+				content := string(raw)
+				expected := "[[Projects/AcmeWidgets.com/Devlog/2026-10-04|2026-10-04]] — Newer"
+				if !strings.Contains(content, expected) {
+					t.Errorf("expected plain entry %q in content:\n%s", expected, content)
+				}
+				if strings.Contains(content, "- [[Projects/AcmeWidgets.com/Devlog/2026-10-04") {
+					t.Errorf("expected entry not to use bullet style in content:\n%s", content)
+				}
+				idxManual := strings.Index(content, "- manual note")
+				idxNewer := strings.Index(content, expected)
+				idxOlder := strings.Index(content, "2026-10-02")
+				if idxManual == -1 || idxNewer == -1 || idxOlder == -1 {
+					t.Fatalf("missing expected elements in content:\n%s", content)
+				}
+				if idxNewer >= idxOlder {
+					t.Errorf("expected 2026-10-04 to be above 2026-10-02, got:\n%s", content)
+				}
+			},
+		},
+		{
+			name: "section with only manual bullet lands above it in plain style",
+			setupIndex: `# Index
+## Recent Activity
+
+- manual note
+`,
+			updates: []*DevlogData{
+				{
+					ProjectName:  "AcmeWidgets.com",
+					Date:         "2026-10-03",
+					Content:      "**New Entry**",
+					CommitsCount: 1,
+				},
+			},
+			verify: func(t *testing.T, indexPath string, raw []byte) {
+				content := string(raw)
+				expected := "[[Projects/AcmeWidgets.com/Devlog/2026-10-03|2026-10-03]] — New Entry"
+				if !strings.Contains(content, expected) {
+					t.Errorf("expected plain entry %q in content:\n%s", expected, content)
+				}
+				if strings.Contains(content, "- [[Projects/AcmeWidgets.com/Devlog/2026-10-03") {
+					t.Errorf("expected entry not to use bullet style in content:\n%s", content)
+				}
+				idxNew := strings.Index(content, expected)
+				idxManual := strings.Index(content, "- manual note")
+				if idxNew == -1 || idxManual == -1 || idxNew >= idxManual {
+					t.Errorf("expected new entry to land above manual note, got content:\n%s", content)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

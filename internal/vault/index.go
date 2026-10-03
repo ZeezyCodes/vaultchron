@@ -196,7 +196,7 @@ func UpdateIndex(vaultCfg config.VaultConfig, data *DevlogData) error {
 			if trimmed == "" || strings.HasPrefix(trimmed, ">") {
 				continue
 			}
-			if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
+			if strings.HasPrefix(trimmed, "- [[") || strings.HasPrefix(trimmed, "* [[") {
 				usesBullets = true
 				if firstItemIdx == -1 {
 					firstItemIdx = i
