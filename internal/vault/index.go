@@ -14,6 +14,11 @@ import (
 // LLM-generated content. This serves as the brief abstract for index entries.
 var firstBoldHeader = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 
+// entryLinkPattern matches devlog Obsidian wikilinks to extract project folder and date.
+// Group 1: project folder name
+// Group 2: date (YYYY-MM-DD)
+var entryLinkPattern = regexp.MustCompile(`\[\[[^\]|]*?([^/\]|]+)/Devlog/(\d{4}-\d{2}-\d{2})(?:\|[^\]]*)?\]\]`)
+
 // extractSummary pulls a one-line summary from the devlog content. It prefers
 // the first bold inline header (the abstract title the LLM produces), falling
 // back to a commit/churn summary derived from telemetry fields.
@@ -43,21 +48,48 @@ func isTableSeparator(line string) bool {
 	return clean == "" && strings.Contains(trimmed, "-")
 }
 
-// UpdateIndex prepends or updates today's devlog entry in the vault's
-// 00-Dev-Index.md under the "Recent Dev Logs" or "Recent Activity" section.
-// Existing manual notes and archive callouts are preserved untouched.
+// parseTableCells splits a markdown table row into its trimmed cell values.
+func parseTableCells(row string) []string {
+	trimmed := strings.TrimSpace(row)
+	trimmed = strings.TrimPrefix(trimmed, "|")
+	trimmed = strings.TrimSuffix(trimmed, "|")
+	raw := strings.Split(trimmed, "|")
+	cells := make([]string, len(raw))
+	for i, c := range raw {
+		cells[i] = strings.TrimSpace(c)
+	}
+	return cells
+}
+
+// formatTableRow formats a markdown table row based on the number of header cells N.
+// N == 2 (or < 2): returns "| link | summary |".
+// N > 2: first cell = link, every header cell whose trimmed text equals "Project" (case-insensitive) gets the project display name,
+// last cell = summary, any other cell empty.
+func formatTableRow(data *DevlogData, link, summary string, headerCells []string) string {
+	n := len(headerCells)
+	if n <= 2 {
+		return fmt.Sprintf("| %s | %s |", link, escapeTableCell(summary))
+	}
+	cells := make([]string, n)
+	cells[0] = link
+	cells[n-1] = escapeTableCell(summary)
+	for i := 1; i < n-1; i++ {
+		if strings.EqualFold(strings.TrimSpace(headerCells[i]), "Project") {
+			cells[i] = data.ProjectName
+		} else {
+			cells[i] = ""
+		}
+	}
+	return "| " + strings.Join(cells, " | ") + " |"
+}
+
+// UpdateIndex inserts or updates a devlog entry in the vault's 00-Dev-Index.md
+// under the "Recent Dev Logs" or "Recent Activity" section.
 //
-// Each entry links to the individual project devlog via an Obsidian wikilink:
-//
-//	[[Projects/<ProjectName>/Devlog/<YYYY-MM-DD>|YYYY-MM-DD]] — <Brief Abstract>
-//
-// If the section uses a markdown table, the row is formatted as:
-//
-//	| [[Projects/<ProjectName>/Devlog/<YYYY-MM-DD>|YYYY-MM-DD]] | <Escaped Summary> |
-//
-// and placed immediately after the table separator line, preserving valid table
-// syntax. If an entry for the same date and project already exists, it is
-// updated in place rather than duplicated.
+// Entries are sorted by date descending (newest first), with equal dates sorted
+// by project name ascending (case-insensitive). Existing entries for the same date
+// and project are updated in place. Unparseable rows (without a matching devlog link)
+// are never reordered, removed, or modified.
 func UpdateIndex(vaultCfg config.VaultConfig, data *DevlogData) error {
 	indexPath := filepath.Join(vaultCfg.Path, vaultCfg.IndexFile)
 
@@ -66,7 +98,14 @@ func UpdateIndex(vaultCfg config.VaultConfig, data *DevlogData) error {
 		return fmt.Errorf("reading index file %s: %w", indexPath, err)
 	}
 
-	lines := strings.Split(string(raw), "\n")
+	isCRLF := strings.Contains(string(raw), "\r\n")
+	lineEnding := "\n"
+	if isCRLF {
+		lineEnding = "\r\n"
+	}
+
+	content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	lines := strings.Split(content, "\n")
 
 	summary := extractSummary(data.Content, data.CommitsCount, data.Shortstat)
 	link := fmt.Sprintf("[[Projects/%s/Devlog/%s|%s]]", data.ProjectName, data.Date, data.Date)
@@ -100,8 +139,6 @@ func UpdateIndex(vaultCfg config.VaultConfig, data *DevlogData) error {
 	}
 
 	// Step 2: Determine section boundary.
-	// Section ends at the next section heading (## or ### of equal/higher rank),
-	// an archive callout (> [!example]), or a horizontal rule (---).
 	sectionEndIdx := len(lines)
 	isHeaderH3 := strings.HasPrefix(strings.TrimSpace(lines[recentHeaderIdx]), "###")
 
@@ -124,26 +161,7 @@ func UpdateIndex(vaultCfg config.VaultConfig, data *DevlogData) error {
 		}
 	}
 
-	// Step 3: Check for existing entry for this project and date.
-	for i := recentHeaderIdx + 1; i < sectionEndIdx; i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-
-		if strings.Contains(line, data.Date) && strings.Contains(line, data.ProjectName) {
-			if strings.HasPrefix(trimmed, "|") {
-				lines[i] = fmt.Sprintf("| %s | %s |", link, escapeTableCell(summary))
-			} else if strings.HasPrefix(trimmed, "- ") {
-				lines[i] = fmt.Sprintf("- %s — %s", link, summary)
-			} else {
-				lines[i] = fmt.Sprintf("%s — %s", link, summary)
-			}
-			return writeFileAtomic(indexPath, []byte(strings.Join(lines, "\n")), 0o644)
-		}
-	}
-
-	// Step 4: Detect whether recent entries are structured as a Markdown Table.
-	// Look for a table separator line between recentHeaderIdx and sectionEndIdx,
-	// ignoring blockquotes/callouts.
+	// Step 3: Detect Table vs List mode and prepare new entry.
 	tableSeparatorIdx := -1
 	for i := recentHeaderIdx + 1; i < sectionEndIdx; i++ {
 		trimmed := strings.TrimSpace(lines[i])
@@ -156,55 +174,106 @@ func UpdateIndex(vaultCfg config.VaultConfig, data *DevlogData) error {
 		}
 	}
 
-	if tableSeparatorIdx != -1 {
-		// Table mode:
-		// Insert immediately after the table separator row to maintain valid syntax.
-		tableRow := fmt.Sprintf("| %s | %s |", link, escapeTableCell(summary))
-		insertAt := tableSeparatorIdx + 1
-		lines = append(lines[:insertAt], append([]string{tableRow}, lines[insertAt:]...)...)
-		return writeFileAtomic(indexPath, []byte(strings.Join(lines, "\n")), 0o644)
-	}
-
-	// Step 5: List mode (no unquoted table found).
-	// Check if existing list items use bullet style (- [[...]]).
+	var newEntry string
+	var startScanIdx int
 	usesBullets := false
 	firstItemIdx := -1
 
-	for i := recentHeaderIdx + 1; i < sectionEndIdx; i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" || strings.HasPrefix(trimmed, ">") {
+	if tableSeparatorIdx != -1 {
+		// Table mode
+		startScanIdx = tableSeparatorIdx + 1
+		headerRow := ""
+		if tableSeparatorIdx > 0 {
+			headerRow = lines[tableSeparatorIdx-1]
+		}
+		headerCells := parseTableCells(headerRow)
+		newEntry = formatTableRow(data, link, summary, headerCells)
+	} else {
+		// List mode
+		startScanIdx = recentHeaderIdx + 1
+		for i := recentHeaderIdx + 1; i < sectionEndIdx; i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if trimmed == "" || strings.HasPrefix(trimmed, ">") {
+				continue
+			}
+			if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
+				usesBullets = true
+				if firstItemIdx == -1 {
+					firstItemIdx = i
+				}
+			} else if strings.HasPrefix(trimmed, "[[") {
+				if firstItemIdx == -1 {
+					firstItemIdx = i
+				}
+			}
+		}
+
+		if usesBullets {
+			newEntry = fmt.Sprintf("- %s — %s", link, summary)
+		} else {
+			newEntry = fmt.Sprintf("%s — %s", link, summary)
+		}
+	}
+
+	// Step 4: Check if same date + same project already exists.
+	// Replace in place (unchanged behavior). Re-running with identical data leaves the file byte-identical.
+	for i := startScanIdx; i < sectionEndIdx; i++ {
+		m := entryLinkPattern.FindStringSubmatch(lines[i])
+		if m == nil {
 			continue
 		}
-		if strings.HasPrefix(trimmed, "- [[") || strings.HasPrefix(trimmed, "* [[") {
-			usesBullets = true
-			if firstItemIdx == -1 {
-				firstItemIdx = i
-			}
-		} else if strings.HasPrefix(trimmed, "[[") {
-			if firstItemIdx == -1 {
-				firstItemIdx = i
+		proj := m[1]
+		date := m[2]
+		if date == data.Date && strings.EqualFold(proj, data.ProjectName) {
+			lines[i] = newEntry
+			return writeFileAtomic(indexPath, []byte(strings.Join(lines, lineEnding)), 0o644)
+		}
+	}
+
+	// Step 5: Sorted insertion.
+	// Order: dates DESCENDING (newest first); equal dates ordered by project ascending (case-insensitive).
+	// Insert before the first parseable entry whose date is older than the new date,
+	// or has the same date and a project that sorts after the new project.
+	// If none, insert after the last parseable entry.
+	// If there are no parseable entries keep today's behavior.
+	insertAt := -1
+	lastParseableIdx := -1
+	newProjLower := strings.ToLower(data.ProjectName)
+
+	for i := startScanIdx; i < sectionEndIdx; i++ {
+		m := entryLinkPattern.FindStringSubmatch(lines[i])
+		if m == nil {
+			continue
+		}
+		lastParseableIdx = i
+		entryProj := m[1]
+		entryDate := m[2]
+		entryProjLower := strings.ToLower(entryProj)
+
+		if entryDate < data.Date || (entryDate == data.Date && entryProjLower > newProjLower) {
+			insertAt = i
+			break
+		}
+	}
+
+	if insertAt == -1 {
+		if lastParseableIdx != -1 {
+			insertAt = lastParseableIdx + 1
+		} else {
+			// No parseable entries: keep today's behavior.
+			if tableSeparatorIdx != -1 {
+				insertAt = tableSeparatorIdx + 1
+			} else if firstItemIdx != -1 {
+				insertAt = firstItemIdx
+			} else {
+				insertAt = recentHeaderIdx + 1
+				for insertAt < sectionEndIdx && strings.TrimSpace(lines[insertAt]) == "" {
+					insertAt++
+				}
 			}
 		}
 	}
 
-	var listEntry string
-	if usesBullets {
-		listEntry = fmt.Sprintf("- %s — %s", link, summary)
-	} else {
-		listEntry = fmt.Sprintf("%s — %s", link, summary)
-	}
-
-	if firstItemIdx != -1 {
-		// Prepend before the first existing list item.
-		lines = append(lines[:firstItemIdx], append([]string{listEntry}, lines[firstItemIdx:]...)...)
-	} else {
-		// No existing list items: insert after header (skipping immediate blanks).
-		insertAt := recentHeaderIdx + 1
-		for insertAt < sectionEndIdx && strings.TrimSpace(lines[insertAt]) == "" {
-			insertAt++
-		}
-		lines = append(lines[:insertAt], append([]string{listEntry}, lines[insertAt:]...)...)
-	}
-
-	return writeFileAtomic(indexPath, []byte(strings.Join(lines, "\n")), 0o644)
+	lines = append(lines[:insertAt], append([]string{newEntry}, lines[insertAt:]...)...)
+	return writeFileAtomic(indexPath, []byte(strings.Join(lines, lineEnding)), 0o644)
 }
