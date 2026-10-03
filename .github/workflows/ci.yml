@@ -58,6 +58,11 @@ jobs:
       - name: Run govulncheck
         run: $(go env GOPATH)/bin/govulncheck ./...
 
+      - name: Shell syntax check
+        run: |
+          sh -n install.sh
+          bash -n deploy/vaultchron.sh
+
   windows:
     name: Build & Test (Windows)
     runs-on: windows-latest
@@ -143,3 +148,6 @@ jobs:
 
       - name: Run tests
         run: go test -v ./...
+
+      - name: Lint launchd plist
+        run: plutil -lint deploy/macos/io.github.zeezycodes.vaultchron.plist
