@@ -55,15 +55,31 @@ func hasVersionFlag(args []string) bool {
 
 // resolveVaultPath resolves the Obsidian vault root path using vaultFlag,
 // then config file, and finally fallback to DefaultConfig.
-func resolveVaultPath(vaultFlag, configPath string) string {
+func resolveVaultPath(vaultFlag, configPath string, dryRun bool, errOut io.Writer) (string, error) {
 	if vaultFlag != "" {
-		return vaultFlag
+		return vaultFlag, nil
 	}
-	cfgPath := config.ResolveConfigPath(configPath)
-	if cfg, err := config.Load(cfgPath); err == nil && cfg.Vault.Path != "" {
-		return cfg.Vault.Path
+	resolved, err := config.Resolve(config.ResolveOptions{
+		Flag:         configPath,
+		AllowExample: dryRun,
+		Getenv:       os.Getenv,
+	})
+	if err != nil {
+		return "", err
 	}
-	return config.DefaultConfig().Vault.Path
+	if resolved.Source == "example" {
+		fmt.Fprintln(errOut, "[INFO] config.yaml not found, falling back to config.example.yaml")
+	} else if resolved.Source == "env" || resolved.Source == "user" {
+		fmt.Fprintf(errOut, "[INFO] using config %s\n", resolved.Path)
+	}
+	cfg, err := config.Load(resolved.Path)
+	if err != nil {
+		return "", err
+	}
+	if cfg.Vault.Path != "" {
+		return cfg.Vault.Path, nil
+	}
+	return config.DefaultConfig().Vault.Path, nil
 }
 
 // runMigrate executes migration or preview logic based on options, writing human-readable
@@ -98,7 +114,11 @@ func runMigrate(vaultFlag, configPath, fileFlag string, dryRun bool, out, errOut
 		return 0
 	}
 
-	vaultPath := resolveVaultPath(vaultFlag, configPath)
+	vaultPath, err := resolveVaultPath(vaultFlag, configPath, dryRun, errOut)
+	if err != nil {
+		fmt.Fprintf(errOut, "error: %v\n", err)
+		return 1
+	}
 	pattern := filepath.Join(vaultPath, "Projects", "*", "Devlog", "*.md")
 	files, err := filepath.Glob(pattern)
 	if err != nil {
@@ -143,7 +163,7 @@ func main() {
 	}
 
 	vaultFlag := flag.String("vault", "", "path to the Obsidian vault root (defaults to config.yaml vault.path or default vault path)")
-	configPath := flag.String("config", "", "path to config.yaml")
+	configPath := flag.String("config", "", "path to config.yaml (order: -config, $VAULTCHRON_CONFIG, ./config.yaml, per-user config, ./config.example.yaml for dry-run)")
 	fileFlag := flag.String("file", "", "migrate a single devlog markdown file instead of the whole vault")
 	dryRun := flag.Bool("dry-run", false, "display what would be migrated without modifying files")
 	versionFlag := flag.Bool("version", false, "print version and exit")

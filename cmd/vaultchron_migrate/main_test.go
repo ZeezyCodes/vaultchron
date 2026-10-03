@@ -8,8 +8,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
-
-	"github.com/ZeezyCodes/vaultchron/internal/config"
 )
 
 func platformPath(p string) string {
@@ -20,9 +18,11 @@ func platformPath(p string) string {
 }
 
 func TestResolveVaultPath(t *testing.T) {
+	var errOut bytes.Buffer
 	// 1. Explicit vault flag
-	if got := resolveVaultPath("/explicit/vault", ""); got != "/explicit/vault" {
-		t.Errorf("expected /explicit/vault, got %q", got)
+	got, err := resolveVaultPath("/explicit/vault", "", false, &errOut)
+	if err != nil || got != "/explicit/vault" {
+		t.Errorf("expected /explicit/vault, got %q, err: %v", got, err)
 	}
 
 	// 2. Config file provides vault path
@@ -39,15 +39,86 @@ scan:
 		t.Fatalf("failed to write test config: %v", err)
 	}
 	expectedVault := platformPath("/custom/from/config")
-	if got := resolveVaultPath("", cfgPath); got != expectedVault {
-		t.Errorf("expected %s, got %q", expectedVault, got)
+	got, err = resolveVaultPath("", cfgPath, false, &errOut)
+	if err != nil || got != expectedVault {
+		t.Errorf("expected %s, got %q, err: %v", expectedVault, got, err)
 	}
 
-	// 3. Fallback when config is missing
-	expectedDefault := config.DefaultConfig().Vault.Path
-	if got := resolveVaultPath("", filepath.Join(tmpDir, "nonexistent.yaml")); got != expectedDefault {
-		t.Errorf("expected default %q, got %q", expectedDefault, got)
+	// 3. Fallback when config is missing returns error
+	got, err = resolveVaultPath("", filepath.Join(tmpDir, "nonexistent.yaml"), false, &errOut)
+	if err == nil {
+		t.Errorf("expected error when config is missing, got %q", got)
 	}
+}
+
+func TestResolveVaultPath_CallSites(t *testing.T) {
+	// Isolate environment
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("VAULTCHRON_CONFIG", "")
+
+	t.Run("real run with no config returns error and runMigrate exits 1", func(t *testing.T) {
+		origWd, _ := os.Getwd()
+		tDir := t.TempDir()
+		_ = os.Chdir(tDir)
+		defer func() { _ = os.Chdir(origWd) }()
+
+		var out, errOut bytes.Buffer
+		code := runMigrate("", "", "", false, &out, &errOut)
+		if code != 1 {
+			t.Fatalf("expected code 1 with no config, got %d", code)
+		}
+		if !strings.Contains(errOut.String(), "no config file found") {
+			t.Errorf("expected searched paths error, got: %s", errOut.String())
+		}
+	})
+
+	t.Run("dry-run with only example config succeeds", func(t *testing.T) {
+		origWd, _ := os.Getwd()
+		tDir := t.TempDir()
+		_ = os.Chdir(tDir)
+		defer func() { _ = os.Chdir(origWd) }()
+
+		vaultDir := filepath.Join(tDir, "test-vault")
+		_ = os.MkdirAll(vaultDir, 0o755)
+		exampleCfg := filepath.Join(tDir, "config.example.yaml")
+		cfgContent := "vault:\n  path: " + filepath.ToSlash(vaultDir) + "\nscan:\n  roots: [" + filepath.ToSlash(tDir) + "]\n"
+		if err := os.WriteFile(exampleCfg, []byte(cfgContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		var out, errOut bytes.Buffer
+		code := runMigrate("", "", "", true, &out, &errOut)
+		if code != 0 {
+			t.Fatalf("expected code 0 in dry-run with example config, got %d. stderr: %s", code, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "[INFO] config.yaml not found, falling back to config.example.yaml") {
+			t.Errorf("expected [INFO] fallback message, got: %s", errOut.String())
+		}
+	})
+
+	t.Run("real run with only example config fails", func(t *testing.T) {
+		origWd, _ := os.Getwd()
+		tDir := t.TempDir()
+		_ = os.Chdir(tDir)
+		defer func() { _ = os.Chdir(origWd) }()
+
+		vaultDir := filepath.Join(tDir, "test-vault")
+		_ = os.MkdirAll(vaultDir, 0o755)
+		exampleCfg := filepath.Join(tDir, "config.example.yaml")
+		cfgContent := "vault:\n  path: " + filepath.ToSlash(vaultDir) + "\nscan:\n  roots: [" + filepath.ToSlash(tDir) + "]\n"
+		if err := os.WriteFile(exampleCfg, []byte(cfgContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		var out, errOut bytes.Buffer
+		code := runMigrate("", "", "", false, &out, &errOut)
+		if code != 1 {
+			t.Fatalf("expected code 1 in real run with only example config, got %d", code)
+		}
+	})
 }
 
 func TestRunMigrate_SingleFileDryRun(t *testing.T) {

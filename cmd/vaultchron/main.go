@@ -117,7 +117,7 @@ func runWithArgs(args []string, stdout, stderr io.Writer, nowFunc func() time.Ti
 	fs.SetOutput(stderr)
 
 	versionFlag := fs.Bool("version", false, "print version and exit")
-	configPath := fs.String("config", "", "path to config.yaml (defaults to config.yaml or config.example.yaml)")
+	configPath := fs.String("config", "", "path to config.yaml (order: -config, $VAULTCHRON_CONFIG, ./config.yaml, per-user config, ./config.example.yaml for scan/dry-run)")
 	scanMode := fs.Bool("scan", false, "run collector only: discover repos, harvest metadata, print results, and exit 0")
 	window := fs.String("window", "24.hours.ago", "git time window for --since log query and HEAD@{<window>} diff reference")
 	dryRun := fs.Bool("dry-run", false, "skip LLM calls and vault writes; render populated DevlogData preview to stdout")
@@ -150,13 +150,27 @@ func runWithArgs(args []string, stdout, stderr io.Writer, nowFunc func() time.Ti
 		return 1
 	}
 
-	// Resolve config path: explicit flag > config.yaml > config.example.yaml.
-	cfgPath := config.ResolveConfigPath(*configPath)
-	if *configPath == "" && cfgPath == "config.example.yaml" {
-		fmt.Fprintln(stderr, "[INFO] config.yaml not found, falling back to config.example.yaml")
+	allowExample := (*scanMode || *dryRun) && !(*migrateVault || *migrateV3)
+	resolved, err := config.Resolve(config.ResolveOptions{
+		Flag:         *configPath,
+		AllowExample: allowExample,
+		Dir:          "",
+		GOOS:         "",
+		Getenv:       os.Getenv,
+		HomeDir:      "",
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
 	}
 
-	cfg, err := config.Load(cfgPath)
+	if resolved.Source == "example" {
+		fmt.Fprintln(stderr, "[INFO] config.yaml not found, falling back to config.example.yaml")
+	} else if resolved.Source == "env" || resolved.Source == "user" {
+		fmt.Fprintf(stderr, "[INFO] using config %s\n", resolved.Path)
+	}
+
+	cfg, err := config.Load(resolved.Path)
 	if err != nil {
 		fmt.Fprintf(stderr, "error loading config: %v\n", err)
 		return 1

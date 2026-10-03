@@ -538,3 +538,164 @@ scan:
 		assertNoVaultWrites("-dry-run -date (no commits)")
 	}
 }
+
+func TestConfigResolutionCLI(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	fixedNow := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	nowFunc := func() time.Time { return fixedNow }
+
+	setupEnvAndDirs := func(t *testing.T) (string, string) {
+		t.Helper()
+		tempHome := t.TempDir()
+		t.Setenv("HOME", tempHome)
+		t.Setenv("USERPROFILE", tempHome)
+		t.Setenv("XDG_CONFIG_HOME", tempHome)
+		t.Setenv("APPDATA", tempHome)
+		t.Setenv("VAULTCHRON_CONFIG", "")
+
+		workDir := t.TempDir()
+		t.Chdir(workDir)
+		return tempHome, workDir
+	}
+
+	writeMinimalConfig := func(t *testing.T, path, vaultPath, repoDir string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := fmt.Sprintf("vault:\n  path: %q\nscan:\n  roots: [%q]\n", filepath.ToSlash(vaultPath), filepath.ToSlash(repoDir))
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("real run with no config fails with searched paths and vault untouched", func(t *testing.T) {
+		_, workDir := setupEnvAndDirs(t)
+		vaultDir := filepath.Join(workDir, "vault")
+		_ = os.MkdirAll(vaultDir, 0o755)
+
+		var stdout, stderr bytes.Buffer
+		code := runWithArgs([]string{"-date", "2026-10-02"}, &stdout, &stderr, nowFunc, loc)
+		if code != 1 {
+			t.Fatalf("expected code 1, got %d", code)
+		}
+		errStr := stderr.String()
+		if !strings.Contains(errStr, "no config file found; looked in this order:") {
+			t.Errorf("expected searched paths message in stderr, got: %s", errStr)
+		}
+		entries, _ := os.ReadDir(vaultDir)
+		if len(entries) != 0 {
+			t.Errorf("expected vault dir untouched, found %d entries", len(entries))
+		}
+	})
+
+	t.Run("dry-run and scan with only config.example.yaml in cwd succeeds with INFO line", func(t *testing.T) {
+		_, workDir := setupEnvAndDirs(t)
+		repoDir := setupTestGitRepo(t)
+		vaultDir := filepath.Join(workDir, "vault")
+		_ = os.MkdirAll(vaultDir, 0o755)
+
+		examplePath := filepath.Join(workDir, "config.example.yaml")
+		writeMinimalConfig(t, examplePath, vaultDir, repoDir)
+
+		// 1. -dry-run
+		var stdout1, stderr1 bytes.Buffer
+		code1 := runWithArgs([]string{"-dry-run", "-date", "2026-10-02"}, &stdout1, &stderr1, nowFunc, loc)
+		if code1 != 0 {
+			t.Fatalf("dry-run failed with code %d: %s", code1, stderr1.String())
+		}
+		if !strings.Contains(stderr1.String(), "[INFO] config.yaml not found, falling back to config.example.yaml") {
+			t.Errorf("expected INFO fallback line in stderr, got: %s", stderr1.String())
+		}
+
+		// 2. -scan
+		var stdout2, stderr2 bytes.Buffer
+		code2 := runWithArgs([]string{"-scan"}, &stdout2, &stderr2, nowFunc, loc)
+		if code2 != 0 {
+			t.Fatalf("scan failed with code %d: %s", code2, stderr2.String())
+		}
+		if !strings.Contains(stderr2.String(), "[INFO] config.yaml not found, falling back to config.example.yaml") {
+			t.Errorf("expected INFO fallback line in stderr, got: %s", stderr2.String())
+		}
+	})
+
+	t.Run("migrate-vault with only an example config fails", func(t *testing.T) {
+		_, workDir := setupEnvAndDirs(t)
+		vaultDir := filepath.Join(workDir, "vault")
+		_ = os.MkdirAll(vaultDir, 0o755)
+		examplePath := filepath.Join(workDir, "config.example.yaml")
+		writeMinimalConfig(t, examplePath, vaultDir, workDir)
+
+		var stdout, stderr bytes.Buffer
+		code := runWithArgs([]string{"-migrate-vault"}, &stdout, &stderr, nowFunc, loc)
+		if code != 1 {
+			t.Fatalf("expected code 1 for migrate-vault with example config, got %d", code)
+		}
+		if !strings.Contains(stderr.String(), "no config file found") {
+			t.Errorf("expected no config file found error, got: %s", stderr.String())
+		}
+	})
+
+	t.Run("per-user config found with no -config flag uses it and prints INFO", func(t *testing.T) {
+		tempHome, workDir := setupEnvAndDirs(t)
+		repoDir := setupTestGitRepo(t)
+		vaultDir := filepath.Join(workDir, "vault")
+		_ = os.MkdirAll(vaultDir, 0o755)
+
+		var userCfgPath string
+		if runtime.GOOS == "windows" {
+			userCfgPath = filepath.Join(tempHome, "vaultchron", "config.yaml")
+		} else {
+			userCfgPath = filepath.Join(tempHome, "vaultchron", "config.yaml")
+		}
+		writeMinimalConfig(t, userCfgPath, vaultDir, repoDir)
+
+		var stdout, stderr bytes.Buffer
+		code := runWithArgs([]string{"-dry-run", "-date", "2026-10-02"}, &stdout, &stderr, nowFunc, loc)
+		if code != 0 {
+			t.Fatalf("expected code 0, got %d. stderr: %s", code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "[INFO] using config "+userCfgPath) {
+			t.Errorf("expected [INFO] using config %s in stderr, got: %s", userCfgPath, stderr.String())
+		}
+	})
+
+	t.Run("VAULTCHRON_CONFIG beats ./config.yaml", func(t *testing.T) {
+		_, workDir := setupEnvAndDirs(t)
+		repoDir := setupTestGitRepo(t)
+		vaultDir := filepath.Join(workDir, "vault")
+		_ = os.MkdirAll(vaultDir, 0o755)
+
+		cwdCfg := filepath.Join(workDir, "config.yaml")
+		writeMinimalConfig(t, cwdCfg, vaultDir, repoDir)
+
+		envCfgDir := t.TempDir()
+		envCfg := filepath.Join(envCfgDir, "env-config.yaml")
+		writeMinimalConfig(t, envCfg, vaultDir, repoDir)
+		t.Setenv("VAULTCHRON_CONFIG", envCfg)
+
+		var stdout, stderr bytes.Buffer
+		code := runWithArgs([]string{"-dry-run", "-date", "2026-10-02"}, &stdout, &stderr, nowFunc, loc)
+		if code != 0 {
+			t.Fatalf("expected code 0, got %d. stderr: %s", code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "[INFO] using config "+envCfg) {
+			t.Errorf("expected [INFO] using config %s in stderr, got: %s", envCfg, stderr.String())
+		}
+	})
+
+	t.Run("VAULTCHRON_CONFIG pointing at a missing file fails", func(t *testing.T) {
+		_, workDir := setupEnvAndDirs(t)
+		missingCfg := filepath.Join(workDir, "missing.yaml")
+		t.Setenv("VAULTCHRON_CONFIG", missingCfg)
+
+		var stdout, stderr bytes.Buffer
+		code := runWithArgs([]string{"-dry-run", "-date", "2026-10-02"}, &stdout, &stderr, nowFunc, loc)
+		if code != 1 {
+			t.Fatalf("expected code 1, got %d", code)
+		}
+		if !strings.Contains(stderr.String(), "config file "+missingCfg+" (from $VAULTCHRON_CONFIG) not found") {
+			t.Errorf("expected missing env config error in stderr, got: %s", stderr.String())
+		}
+	})
+}
