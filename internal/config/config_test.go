@@ -377,10 +377,10 @@ func TestResolveConfigPath(t *testing.T) {
 // TestLoad_CatchUpDays verifies absent, explicit 0, negative, and positive values.
 func TestLoad_CatchUpDays(t *testing.T) {
 	tests := []struct {
-		name      string
-		yaml      string
-		wantErr   bool
-		wantVal   int
+		name    string
+		yaml    string
+		wantErr bool
+		wantVal int
 	}{
 		{
 			name: "absent defaults to 7",
@@ -466,10 +466,10 @@ scan:
 // TestLoad_MaxCallsPerRun verifies absent, explicit 0, negative, and positive values.
 func TestLoad_MaxCallsPerRun(t *testing.T) {
 	tests := []struct {
-		name      string
-		yaml      string
-		wantErr   bool
-		wantVal   int
+		name    string
+		yaml    string
+		wantErr bool
+		wantVal int
 	}{
 		{
 			name: "absent defaults to 20",

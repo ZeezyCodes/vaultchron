@@ -24,22 +24,236 @@ const defaultLLMBaseURL = "https://generativelanguage.googleapis.com/v1beta/open
 
 // PipelineOptions controls the pipeline execution mode.
 type PipelineOptions struct {
+	// Day mode flags
+	Date     string // exact day (YYYY-MM-DD)
+	From     string // inclusive start day (YYYY-MM-DD)
+	To       string // inclusive end day (YYYY-MM-DD, defaults to yesterday)
+	CatchUp  int    // lookback in calendar days (> 0 overrides scan.catch_up_days)
+	MaxCalls int    // max LLM calls per run (>= 0 overrides llm.max_calls_per_run; 0 = unlimited; -1 means use config)
+
 	// Window is the git time window (e.g. "24.hours.ago") passed to
 	// git log --since and used as HEAD@{<window>} for diff references.
-	Window string
+	Window   string
+	IsWindow bool // true if -window was explicitly visited on CLI
+
 	// RepoFilter, when non-empty, restricts processing to a single
 	// repository whose base directory name matches.
 	RepoFilter string
-	// Force processes repositories even if they have zero commits in the
-	// window.
+	// Force overwrites existing devlogs in day mode, or processes repositories
+	// with zero commits in legacy window mode.
 	Force bool
-	// DryRun skips LLM calls and disk writes. Instead, renders a populated
-	// DevlogData preview to stdout.
+	// DryRun skips LLM calls and disk writes.
 	DryRun bool
+	// Scan runs collector only without writing or LLM synthesis.
+	Scan bool
+
+	// Visited tracks explicitly set flags from flag.Visit.
+	Visited map[string]bool
+
+	// Clock and location injection (tests inject mock clock and fixed zone;
+	// cmd/vaultchron injects time.Now and time.Local).
+	Now func() time.Time
+	Loc *time.Location
 }
 
-// RepoResult records the outcome of processing a single repository in the
-// execution summary.
+// ExecutionPlan represents the fully resolved and validated execution parameters.
+type ExecutionPlan struct {
+	IsLegacyWindow bool
+	Window         string
+	Days           []collector.DayWindow
+	MaxCalls       int // 0 = unlimited
+	RepoFilter     string
+	Force          bool
+	DryRun         bool
+	Scan           bool
+	Now            time.Time
+	Loc            *time.Location
+}
+
+// ResolvePlan resolves and validates CLI options, configuration, and time into
+// an ExecutionPlan. Returns an error if flag combinations are invalid or dates are in the future.
+func ResolvePlan(opts PipelineOptions, cfg *config.Config, now time.Time, loc *time.Location) (*ExecutionPlan, error) {
+	if loc == nil {
+		loc = time.Local
+	}
+
+	visited := opts.Visited
+	if visited == nil {
+		visited = make(map[string]bool)
+		if opts.Date != "" {
+			visited["date"] = true
+		}
+		if opts.From != "" {
+			visited["from"] = true
+		}
+		if opts.To != "" {
+			visited["to"] = true
+		}
+		if opts.IsWindow || opts.Window != "" {
+			visited["window"] = true
+		}
+		if opts.CatchUp > 0 {
+			visited["catch-up"] = true
+		}
+		if opts.MaxCalls >= 0 {
+			visited["max-calls"] = true
+		}
+	}
+
+	// Validation rule: -date cannot be combined with -from, -to, -window, or -catch-up
+	if visited["date"] && (visited["from"] || visited["to"] || visited["window"] || visited["catch-up"]) {
+		return nil, fmt.Errorf("cannot combine -date with -from, -to, -window, or -catch-up")
+	}
+
+	// Validation rule: -from/-to cannot be combined with -window or -catch-up
+	if (visited["from"] || visited["to"]) && (visited["window"] || visited["catch-up"]) {
+		return nil, fmt.Errorf("cannot combine -from/-to with -window or -catch-up")
+	}
+
+	// Validation rule: -to without -from is an error
+	if visited["to"] && !visited["from"] {
+		return nil, fmt.Errorf("-to flag requires -from")
+	}
+
+	// Validation rule: -catch-up with -window is an error
+	if visited["catch-up"] && visited["window"] {
+		return nil, fmt.Errorf("cannot combine -catch-up with -window")
+	}
+
+	// Validation rule: -catch-up < 1 is an error
+	if visited["catch-up"] && opts.CatchUp < 1 {
+		return nil, fmt.Errorf("invalid -catch-up %d: must be at least 1", opts.CatchUp)
+	}
+
+	// Validation rule: -max-calls < 0 is an error
+	if visited["max-calls"] && opts.MaxCalls < 0 {
+		return nil, fmt.Errorf("invalid -max-calls %d: must be non-negative", opts.MaxCalls)
+	}
+
+	maxCalls := cfg.LLM.MaxCallsPerRunVal()
+	if visited["max-calls"] {
+		maxCalls = opts.MaxCalls
+	}
+
+	// Legacy window mode
+	if visited["window"] {
+		win := opts.Window
+		if win == "" {
+			win = "24.hours.ago"
+		}
+		return &ExecutionPlan{
+			IsLegacyWindow: true,
+			Window:         win,
+			MaxCalls:       maxCalls,
+			RepoFilter:     opts.RepoFilter,
+			Force:          opts.Force,
+			DryRun:         opts.DryRun,
+			Scan:           opts.Scan,
+			Now:            now,
+			Loc:            loc,
+		}, nil
+	}
+
+	// Day mode: -date D
+	if visited["date"] {
+		w, err := collector.NewDayWindow(opts.Date, loc, now)
+		if err != nil {
+			return nil, err
+		}
+		return &ExecutionPlan{
+			IsLegacyWindow: false,
+			Days:           []collector.DayWindow{w},
+			MaxCalls:       maxCalls,
+			RepoFilter:     opts.RepoFilter,
+			Force:          opts.Force,
+			DryRun:         opts.DryRun,
+			Scan:           opts.Scan,
+			Now:            now,
+			Loc:            loc,
+		}, nil
+	}
+
+	// Day mode: -from A [-to B]
+	if visited["from"] {
+		if _, err := collector.NewDayWindow(opts.From, loc, now); err != nil {
+			return nil, err
+		}
+
+		toDate := opts.To
+		if !visited["to"] {
+			y, m, d := now.In(loc).Date()
+			yesterday := time.Date(y, m, d, 0, 0, 0, 0, loc).AddDate(0, 0, -1)
+			toDate = yesterday.Format("2006-01-02")
+		}
+
+		if _, err := collector.NewDayWindow(toDate, loc, now); err != nil {
+			return nil, err
+		}
+
+		if opts.From > toDate {
+			return nil, fmt.Errorf("invalid date range: -from %s is after -to %s", opts.From, toDate)
+		}
+
+		tFrom, _ := time.ParseInLocation("2006-01-02", opts.From, loc)
+		tTo, _ := time.ParseInLocation("2006-01-02", toDate, loc)
+
+		var days []collector.DayWindow
+		for tCur := tFrom; !tCur.After(tTo); tCur = tCur.AddDate(0, 0, 1) {
+			dStr := tCur.Format("2006-01-02")
+			w, err := collector.NewDayWindow(dStr, loc, now)
+			if err != nil {
+				return nil, err
+			}
+			days = append(days, w)
+		}
+
+		return &ExecutionPlan{
+			IsLegacyWindow: false,
+			Days:           days,
+			MaxCalls:       maxCalls,
+			RepoFilter:     opts.RepoFilter,
+			Force:          opts.Force,
+			DryRun:         opts.DryRun,
+			Scan:           opts.Scan,
+			Now:            now,
+			Loc:            loc,
+		}, nil
+	}
+
+	// Day mode: Default (none of -date, -from, -to, -window)
+	n := cfg.Scan.CatchUpDaysVal()
+	if visited["catch-up"] {
+		n = opts.CatchUp
+	}
+
+	y, m, d := now.In(loc).Date()
+	todayMidnight := time.Date(y, m, d, 0, 0, 0, 0, loc)
+
+	var days []collector.DayWindow
+	for i := n; i >= 1; i-- {
+		dayDate := todayMidnight.AddDate(0, 0, -i)
+		dStr := dayDate.Format("2006-01-02")
+		w, err := collector.NewDayWindow(dStr, loc, now)
+		if err != nil {
+			return nil, err
+		}
+		days = append(days, w)
+	}
+
+	return &ExecutionPlan{
+		IsLegacyWindow: false,
+		Days:           days,
+		MaxCalls:       maxCalls,
+		RepoFilter:     opts.RepoFilter,
+		Force:          opts.Force,
+		DryRun:         opts.DryRun,
+		Scan:           opts.Scan,
+		Now:            now,
+		Loc:            loc,
+	}, nil
+}
+
+// RepoResult records the outcome of processing a single repository in legacy window mode.
 type RepoResult struct {
 	Name    string // project name (e.g. "AcmeWidgets.com")
 	Status  string // "WRITTEN", "SKIPPED", "ERROR"
@@ -47,33 +261,79 @@ type RepoResult struct {
 	Output  string // output path or reason
 }
 
-// Run executes the full devlog generation pipeline: discover repositories,
-// harvest git telemetry and agent context, then for each matching repo
-// either render a dry-run preview or call the LLM and write a devlog.
-//
-// Error containment: if diff extraction, LLM synthesis, or disk I/O fails for
-// a single repo, the error is logged with [ERROR] <repo>: <err>, recorded in
-// the execution summary, and processing continues for remaining repositories.
-//
-// Returns a non-nil error only if all active repos fail or if critical
-// configuration/scan errors occur.
+// DayResultRow represents one row in the day-mode summary table.
+type DayResultRow struct {
+	Repo    string
+	Date    string
+	Status  string
+	Commits string
+	Output  string
+}
+
+// DaySummaryCounts summarizes counts for day mode.
+type DaySummaryCounts struct {
+	Written     int
+	Skipped     int
+	Pending     int
+	Errors      int
+	ZeroCommits int
+}
+
+// Run executes the devlog generation pipeline.
 func Run(cfg *config.Config, opts PipelineOptions) error {
-	// Top-level context with a 10-minute timeout for the entire run to prevent
-	// hung network calls from blocking background timers or cron schedules.
+	nowFn := opts.Now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	now := nowFn()
+	loc := opts.Loc
+	if loc == nil {
+		loc = time.Local
+	}
+
+	plan, err := ResolvePlan(opts, cfg, now, loc)
+	if err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	// Phase 1: discover repositories.
+	_, _, err = RunPlan(ctx, cfg, plan)
+	return err
+}
+
+// RunPlan executes a resolved execution plan, returning row details, summary counts,
+// and an error if any step failed.
+func RunPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan) ([]DayResultRow, DaySummaryCounts, error) {
+	// Discover repositories across scan roots.
 	repos, err := collector.DiscoverRepositories(ctx, cfg.Scan.Roots, cfg.Scan.MaxDepth, cfg.Scan.Excludes)
 	if err != nil {
-		return fmt.Errorf("discovering repositories: %w", err)
+		return nil, DaySummaryCounts{}, fmt.Errorf("discovering repositories: %w", err)
 	}
 
-	// Phase 2: harvest agent context once for the active window if enabled.
-	now := time.Now()
+	// Filter repositories if requested.
+	if plan.RepoFilter != "" {
+		var filtered []string
+		for _, r := range repos {
+			if filepath.Base(r) == plan.RepoFilter || r == plan.RepoFilter {
+				filtered = append(filtered, r)
+			}
+		}
+		repos = filtered
+	}
+
+	if plan.IsLegacyWindow {
+		return runLegacyPlan(ctx, cfg, plan, repos)
+	}
+
+	return runDayPlan(ctx, cfg, plan, repos)
+}
+
+func runLegacyPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, repos []string) ([]DayResultRow, DaySummaryCounts, error) {
 	var agentCtx *collector.AgentContext
 	if cfg.AgentLogs.Enabled {
-		since := now.Add(-24 * time.Hour)
+		since := plan.Now.Add(-24 * time.Hour)
 		var harvestErr error
 		agentCtx, harvestErr = harvestAgentContextFn(cfg.AgentLogs, since)
 		if harvestErr != nil {
@@ -85,7 +345,7 @@ func Run(cfg *config.Config, opts PipelineOptions) error {
 	}
 
 	var llmClient *llm.Client
-	if !opts.DryRun {
+	if !plan.DryRun {
 		baseURL := cfg.LLM.BaseURL
 		if baseURL == "" {
 			baseURL = defaultLLMBaseURL
@@ -93,25 +353,30 @@ func Run(cfg *config.Config, opts PipelineOptions) error {
 		llmClient = llm.New(cfg.LLM.Waterfall, baseURL, cfg.LLM.APIKeyEnv, 120*time.Second)
 	}
 
-	today := now.Format("2006-01-02")
-	nowStr := now.Format("2006-01-02 15:04:05")
+	today := plan.Now.Format("2006-01-02")
+	nowStr := plan.Now.Format("2006-01-02 15:04:05")
 
 	var results []RepoResult
 	activeCount := 0
 	failedCount := 0
 
 	for _, repoPath := range repos {
-		// Apply repo filter.
-		if opts.RepoFilter != "" {
-			if filepath.Base(repoPath) != opts.RepoFilter && repoPath != opts.RepoFilter {
-				continue
-			}
+		repoName := filepath.Base(repoPath)
+		projName := collector.ProjectName(repoPath)
+
+		// Skip-existing check in legacy mode unless -force
+		exists, _, err := vault.DevlogExists(cfg.Vault.Path, projName, today)
+		if err == nil && exists && !plan.Force {
+			results = append(results, RepoResult{
+				Name:    projName,
+				Status:  "SKIPPED",
+				Commits: 0,
+				Output:  "note exists",
+			})
+			continue
 		}
 
-		repoName := filepath.Base(repoPath)
-
-		// Phase 2: collect git telemetry + diffs.
-		meta, err := collector.HarvestRepoMetadata(ctx, repoPath, opts.Window)
+		meta, err := collector.HarvestRepoMetadata(ctx, repoPath, plan.Window)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[ERROR] %s: %v\n", repoName, err)
 			results = append(results, RepoResult{
@@ -124,9 +389,8 @@ func Run(cfg *config.Config, opts PipelineOptions) error {
 			continue
 		}
 
-		// Handle nil metadata (zero commits in window).
 		if meta == nil {
-			if !opts.Force {
+			if !plan.Force {
 				results = append(results, RepoResult{
 					Name:    repoName,
 					Status:  "SKIPPED",
@@ -135,8 +399,7 @@ func Run(cfg *config.Config, opts PipelineOptions) error {
 				})
 				continue
 			}
-			// Force mode: retrieve minimal metadata via ScanRepository.
-			scanResult, scanErr := collector.ScanRepository(ctx, repoPath, opts.Window)
+			scanResult, scanErr := collector.ScanRepository(ctx, repoPath, plan.Window)
 			if scanErr != nil || scanResult == nil {
 				results = append(results, RepoResult{
 					Name:    repoName,
@@ -173,10 +436,9 @@ func Run(cfg *config.Config, opts PipelineOptions) error {
 			Now:          nowStr,
 		}
 
-		if opts.DryRun {
-			// Phase 4 (dry-run): render preview with placeholder content.
+		if plan.DryRun {
 			data.Model = "dry-run"
-			data.Content = buildDryRunContent(meta, opts.Window)
+			data.Content = buildDryRunContent(meta, plan.Window)
 			rendered, renderErr := vault.RenderDevlog(data)
 			if renderErr != nil {
 				fmt.Fprintf(os.Stderr, "[ERROR] %s: render failed: %v\n", meta.Name, renderErr)
@@ -197,7 +459,6 @@ func Run(cfg *config.Config, opts PipelineOptions) error {
 				Output:  fmt.Sprintf("Projects/%s/Devlog/%s.md", meta.Name, today),
 			})
 		} else {
-			// Phase 4-6 (standard): build prompt, call LLM, write devlog.
 			sysPrompt, userPrompt := BuildPrompt(meta, agentCtx)
 			content, model, llmErr := llmClient.Call(ctx, sysPrompt, userPrompt)
 			if llmErr != nil {
@@ -241,20 +502,248 @@ func Run(cfg *config.Config, opts PipelineOptions) error {
 		}
 	}
 
-	// Emit structured terminal summary table.
 	printSummaryTable(results)
 
-	// Return non-zero exit code only if all active repos fail or if
-	// critical configuration/scan errors occur.
 	if activeCount > 0 && failedCount == activeCount {
-		return fmt.Errorf("all %d active repository(ies) failed", activeCount)
+		return nil, DaySummaryCounts{}, fmt.Errorf("all %d active repository(ies) failed", activeCount)
 	}
 
-	return nil
+	return nil, DaySummaryCounts{}, nil
+}
+
+func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, repos []string) ([]DayResultRow, DaySummaryCounts, error) {
+	// Scan-only mode
+	if plan.Scan {
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+		fmt.Fprintln(w, "Repository\tDate\tCommits")
+		fmt.Fprintln(w, "----------\t----\t-------")
+		for _, dayWindow := range plan.Days {
+			for _, repoPath := range repos {
+				meta, err := collector.ScanRepositoryDay(ctx, repoPath, dayWindow)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "  [WARN] %s (%s): %v\n", repoPath, dayWindow.Date, err)
+					continue
+				}
+				if meta != nil && meta.CommitsCount > 0 {
+					fmt.Fprintf(w, "%s\t%s\t%d\n", meta.Name, dayWindow.Date, meta.CommitsCount)
+				}
+			}
+		}
+		w.Flush()
+		return nil, DaySummaryCounts{}, nil
+	}
+
+	var llmClient *llm.Client
+	if !plan.DryRun {
+		baseURL := cfg.LLM.BaseURL
+		if baseURL == "" {
+			baseURL = defaultLLMBaseURL
+		}
+		llmClient = llm.New(cfg.LLM.Waterfall, baseURL, cfg.LLM.APIKeyEnv, 120*time.Second)
+	}
+
+	var rows []DayResultRow
+	var counts DaySummaryCounts
+	llmCallsCount := 0
+
+	// Day-major processing: for each day, for each repo
+	for _, dayWindow := range plan.Days {
+		day := dayWindow.Date
+		for _, repoPath := range repos {
+			projName := collector.ProjectName(repoPath)
+
+			// Step 1: Check note existence
+			exists, notePartial, err := vault.DevlogExists(cfg.Vault.Path, projName, day)
+			if err != nil {
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  "ERROR",
+					Commits: "-",
+					Output:  fmt.Sprintf("checking note: %v", err),
+				})
+				counts.Errors++
+				continue
+			}
+
+			isRegeneratingPartial := notePartial && !dayWindow.Partial
+			if exists && !plan.Force && !isRegeneratingPartial {
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  "SKIPPED",
+					Commits: "-",
+					Output:  "note exists",
+				})
+				counts.Skipped++
+				continue
+			}
+
+			// Step 2: Scan repository day
+			meta, err := collector.ScanRepositoryDay(ctx, repoPath, dayWindow)
+			if err != nil {
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  "ERROR",
+					Commits: "-",
+					Output:  fmt.Sprintf("scan failed: %v", err),
+				})
+				counts.Errors++
+				continue
+			}
+
+			// nil result (zero commits) -> not listed in the table, counted separately; never write empty note even with -force
+			if meta == nil || meta.CommitsCount == 0 {
+				counts.ZeroCommits++
+				continue
+			}
+
+			commitsStr := fmt.Sprintf("%d", meta.CommitsCount)
+			expectedRelPath := fmt.Sprintf("Projects/%s/Devlog/%s.md", projName, day)
+
+			// Step 3: Check Call Cap
+			if plan.MaxCalls > 0 && llmCallsCount >= plan.MaxCalls {
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  "PENDING",
+					Commits: commitsStr,
+					Output:  "call cap reached",
+				})
+				counts.Pending++
+				continue
+			}
+
+			if plan.DryRun {
+				var status string
+				if exists && plan.Force {
+					status = "WOULD OVERWRITE"
+				} else if isRegeneratingPartial {
+					status = "WOULD REGENERATE"
+				} else {
+					status = "WOULD WRITE"
+				}
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  status,
+					Commits: commitsStr,
+					Output:  expectedRelPath,
+				})
+				counts.Written++
+				llmCallsCount++ // cap applies to dry-run plan
+				continue
+			}
+
+			// Real run: call LLM
+			llmCallsCount++ // every attempt counts, including failures
+			sysPrompt, userPrompt := BuildDayPrompt(meta, day, dayWindow.Partial)
+			content, model, llmErr := llmClient.Call(ctx, sysPrompt, userPrompt)
+			if llmErr != nil {
+				fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): LLM generation failed: %v\n", projName, day, llmErr)
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  "ERROR",
+					Commits: commitsStr,
+					Output:  fmt.Sprintf("LLM generation failed: %v", llmErr),
+				})
+				counts.Errors++
+				continue
+			}
+
+			slug, lang := getProjectTags(cfg, meta.Name)
+			nowStr := plan.Now.Format("2006-01-02 15:04:05")
+			devlogData := vault.DevlogData{
+				Date:         day,
+				ProjectName:  meta.Name,
+				Slug:         slug,
+				Lang:         lang,
+				Branch:       meta.Branch,
+				CommitsCount: meta.CommitsCount,
+				Shortstat:    meta.Shortstat,
+				TopPackages:  meta.TopPackages,
+				Now:          nowStr,
+				Model:        model,
+				Content:      content,
+				Partial:      dayWindow.Partial,
+			}
+
+			notePath, writeErr := vault.WriteDevlog(cfg.Vault.Path, meta.Name, day, devlogData)
+			if writeErr != nil {
+				fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): write failed: %v\n", projName, day, writeErr)
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  "ERROR",
+					Commits: commitsStr,
+					Output:  fmt.Sprintf("write failed: %v", writeErr),
+				})
+				counts.Errors++
+				continue
+			}
+
+			relPath, _ := filepath.Rel(cfg.Vault.Path, notePath)
+			if relPath == "" {
+				relPath = expectedRelPath
+			}
+
+			if idxErr := vault.UpdateIndex(cfg.Vault, &devlogData); idxErr != nil {
+				fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): index update failed: %v\n", projName, day, idxErr)
+			}
+
+			rows = append(rows, DayResultRow{
+				Repo:    projName,
+				Date:    day,
+				Status:  "WRITTEN",
+				Commits: commitsStr,
+				Output:  relPath,
+			})
+			counts.Written++
+		}
+	}
+
+	printDaySummaryTable(rows)
+
+	var writtenWord string
+	if plan.DryRun {
+		writtenWord = "would be written"
+	} else {
+		writtenWord = "written"
+	}
+
+	if counts.Pending > 0 {
+		fmt.Printf("\n%d %s, %d skipped, %d pending (call cap reached; run again to continue), %d errors\n",
+			counts.Written, writtenWord, counts.Skipped, counts.Pending, counts.Errors)
+	} else {
+		fmt.Printf("\n%d %s, %d skipped, %d pending, %d errors\n",
+			counts.Written, writtenWord, counts.Skipped, counts.Pending, counts.Errors)
+	}
+	fmt.Printf("%d repo-days had no commits\n", counts.ZeroCommits)
+
+	if counts.Errors > 0 {
+		return rows, counts, fmt.Errorf("%d error(s) occurred during run", counts.Errors)
+	}
+
+	return rows, counts, nil
+}
+
+func printDaySummaryTable(rows []DayResultRow) {
+	if len(rows) == 0 {
+		return
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "Repository\tDate\tStatus\tCommits\tOutput / Reason")
+	fmt.Fprintln(w, "----------\t----\t------\t-------\t---------------")
+	for _, r := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Repo, r.Date, r.Status, r.Commits, r.Output)
+	}
+	w.Flush()
 }
 
 // printSummaryTable renders a structured terminal summary of all repository
-// processing results.
+// processing results for legacy window mode.
 func printSummaryTable(results []RepoResult) {
 	if len(results) == 0 {
 		return

@@ -104,3 +104,67 @@ func formatTopPackages(pkgs []string) string {
 	}
 	return strings.Join(pkgs, ", ")
 }
+
+// BuildDayPrompt constructs the system and user prompts for day-based devlogs.
+// It explicitly states that the note covers the local calendar day dateStr and
+// whether the day is partial (not yet complete).
+// Commit lines are capped at 200 followed by an omission summary line if exceeded.
+func BuildDayPrompt(meta *collector.RepoMetadata, dateStr string, partial bool) (string, string) {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("# Technical Journal — %s\n\n", meta.Name))
+	b.WriteString(fmt.Sprintf("Repository: %s\n", meta.Path))
+	b.WriteString(fmt.Sprintf("Active Branch: `%s`\n", meta.Branch))
+	b.WriteString(fmt.Sprintf("Date: %s\n", dateStr))
+	if partial {
+		b.WriteString("Status: Partial day (in progress)\n")
+	} else {
+		b.WriteString("Status: Complete day\n")
+	}
+	b.WriteString(fmt.Sprintf("Commits: %d\n", meta.CommitsCount))
+	b.WriteString(fmt.Sprintf("Churn: %s\n", meta.Shortstat))
+	b.WriteString(fmt.Sprintf("Top Packages: %s\n", formatTopPackages(meta.TopPackages)))
+
+	b.WriteString("\n## Commit History\n\n")
+	if len(meta.Commits) > 0 {
+		commitLimit := 200
+		if len(meta.Commits) <= commitLimit {
+			for _, c := range meta.Commits {
+				b.WriteString(fmt.Sprintf("- %s\n", c))
+			}
+		} else {
+			for i := 0; i < commitLimit; i++ {
+				b.WriteString(fmt.Sprintf("- %s\n", meta.Commits[i]))
+			}
+			omitted := len(meta.Commits) - commitLimit
+			b.WriteString(fmt.Sprintf("... %d more commits omitted\n", omitted))
+		}
+	} else {
+		b.WriteString("- *(no commits in day)*\n")
+	}
+
+	// Capped unified diff
+	b.WriteString(fmt.Sprintf("\n## Code Diff (diff capped at %d chars)\n\n", collector.MaxDiffChars()))
+	if meta.UnifiedDiff != "" {
+		b.WriteString("```diff\n")
+		b.WriteString(meta.UnifiedDiff)
+		b.WriteString("\n```\n")
+	} else {
+		b.WriteString("*(no changes in day)*\n")
+	}
+
+	b.WriteString("\n## Instructions\n\n")
+	if partial {
+		b.WriteString(fmt.Sprintf("Write a technical devlog for %s covering local calendar day %s (partial, day not over).\n", meta.Name, dateStr))
+	} else {
+		b.WriteString(fmt.Sprintf("Write a technical devlog for %s covering local calendar day %s (complete day).\n", meta.Name, dateStr))
+	}
+	b.WriteString("Active branch: `" + meta.Branch + "`. Churn: " + meta.Shortstat + ".\n")
+	b.WriteString("Top packages: " + formatTopPackages(meta.TopPackages) + ".\n\n")
+	b.WriteString("Output ONLY the five callout sections in the exact format specified in the system prompt:\n")
+	b.WriteString("[!abstract] -> [!info] -> [!bug] -> [!warning] (with - [ ] checkboxes) -> [!check].\n")
+	b.WriteString("Do NOT include YAML frontmatter, breadcrumb, title, or telemetry callout — they are already rendered.\n")
+	b.WriteString("Do NOT use # ## ### headings inside callout bodies — use **bold inline headers** or bullet lists.\n")
+
+	return systemPrompt, b.String()
+}

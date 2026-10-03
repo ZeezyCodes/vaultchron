@@ -96,3 +96,80 @@ func TestBuildPrompt_UserPromptContainsTelemetry(t *testing.T) {
 		t.Error("userPrompt should contain diff contents")
 	}
 }
+
+// TestBuildDayPrompt asserts that day mode prompt names the day and partial status,
+// contains no "24 hours", and caps commit messages at 200 with an omission count line.
+func TestBuildDayPrompt(t *testing.T) {
+	t.Run("partial day names day and has no 24 hours", func(t *testing.T) {
+		meta := &collector.RepoMetadata{
+			Name:         "AcmeApp",
+			Path:         "/path/to/acme",
+			Branch:       "feature/w9b",
+			Commits:      []string{"c1 Commit one", "c2 Commit two"},
+			CommitsCount: 2,
+			Shortstat:    "1 file changed, 5 insertions(+)",
+			TopPackages:  []string{"pkg/api"},
+			UnifiedDiff:  "+added code",
+		}
+		sysPrompt, userPrompt := BuildDayPrompt(meta, "2026-10-03", true)
+		if sysPrompt == "" {
+			t.Fatal("expected non-empty sysPrompt")
+		}
+		if !strings.Contains(userPrompt, "2026-10-03") {
+			t.Errorf("expected userPrompt to contain date 2026-10-03, got:\n%s", userPrompt)
+		}
+		if !strings.Contains(userPrompt, "Partial day") || !strings.Contains(userPrompt, "partial, day not over") {
+			t.Errorf("expected userPrompt to mention partial day, got:\n%s", userPrompt)
+		}
+		if strings.Contains(strings.ToLower(userPrompt), "24 hours") {
+			t.Errorf("userPrompt should not mention '24 hours':\n%s", userPrompt)
+		}
+	})
+
+	t.Run("complete day names day and has no 24 hours", func(t *testing.T) {
+		meta := &collector.RepoMetadata{
+			Name:         "AcmeApp",
+			Path:         "/path/to/acme",
+			Branch:       "main",
+			Commits:      []string{"c1 Commit one"},
+			CommitsCount: 1,
+			Shortstat:    "1 file changed, 1 insertion(+)",
+			TopPackages:  []string{"pkg/api"},
+			UnifiedDiff:  "+added code",
+		}
+		_, userPrompt := BuildDayPrompt(meta, "2026-09-30", false)
+		if !strings.Contains(userPrompt, "2026-09-30") {
+			t.Errorf("expected userPrompt to contain date 2026-09-30")
+		}
+		if !strings.Contains(userPrompt, "Complete day") {
+			t.Errorf("expected userPrompt to mention complete day")
+		}
+		if strings.Contains(strings.ToLower(userPrompt), "24 hours") {
+			t.Errorf("userPrompt should not mention '24 hours'")
+		}
+	})
+
+	t.Run("commits capped at 200 with omission line", func(t *testing.T) {
+		var commits []string
+		for i := 1; i <= 250; i++ {
+			commits = append(commits, "commit message")
+		}
+		meta := &collector.RepoMetadata{
+			Name:         "AcmeApp",
+			Path:         "/path/to/acme",
+			Branch:       "main",
+			Commits:      commits,
+			CommitsCount: len(commits),
+			Shortstat:    "50 files changed",
+			TopPackages:  []string{"pkg/api"},
+		}
+		_, userPrompt := BuildDayPrompt(meta, "2026-09-30", false)
+		omissionLine := "... 50 more commits omitted"
+		if !strings.Contains(userPrompt, omissionLine) {
+			t.Errorf("expected userPrompt to contain %q, got:\n%s", omissionLine, userPrompt)
+		}
+		if !strings.Contains(userPrompt, "Commits: 250") {
+			t.Errorf("expected userPrompt to preserve true commit count 250, got:\n%s", userPrompt)
+		}
+	})
+}

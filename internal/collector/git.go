@@ -721,6 +721,11 @@ func truncateDiff(diffText string) string {
 	return fmt.Sprintf("%s\n\n... [TRUNCATED — %d chars total] ...\n\n%s", head, len(diffText), tail)
 }
 
+// ProjectName maps a repo path to its vault project directory name.
+func ProjectName(repoPath string) string {
+	return repoToProjectName(repoPath)
+}
+
 // repoToProjectName maps a repo path to its vault project directory name.
 func repoToProjectName(repoPath string) string {
 	base := filepath.Base(repoPath)

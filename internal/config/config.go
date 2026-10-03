@@ -265,8 +265,8 @@ func DefaultConfig() *Config {
 			RecentDays:  7,
 		},
 		Scan: ScanConfig{
-			Roots:       []string{rootsPath},
-			MaxDepth:    3,
+			Roots:    []string{rootsPath},
+			MaxDepth: 3,
 			Excludes: []string{
 				".nvm", ".local", ".cache",
 				"node_modules", "vendor",

@@ -450,3 +450,20 @@ func TestHarvestRepoMetadata_FreshSingleCommitRepo(t *testing.T) {
 		t.Errorf("expected non-empty branch name, got %q", meta.Branch)
 	}
 }
+
+func TestProjectName(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/home/user/projects/sample-app", "sample-app"},
+		{"/srv", "Homelab"},
+		{"srv", "Homelab"},
+		{"/path/to/Homelab", "Homelab"},
+	}
+	for _, tt := range tests {
+		if got := ProjectName(tt.path); got != tt.want {
+			t.Errorf("ProjectName(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
