@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -490,5 +491,121 @@ func TestScanRepositoryDay_CloneNoReflog(t *testing.T) {
 	}
 	if !strings.Contains(meta.UnifiedDiff, "cloned content") {
 		t.Errorf("clone diff missing content: %s", meta.UnifiedDiff)
+	}
+}
+
+func TestScanRepositoryDay_ShortstatAndPackages(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, loc)
+	dir, runGit := setupIsolatedTestRepo(t)
+
+	// Day 1 (First-commit / empty tree day): changes files under cmd/
+	if err := os.MkdirAll(filepath.Join(dir, "cmd", "app"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd/app: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cmd", "app", "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("writing main.go: %v", err)
+	}
+	runGit(nil, "add", "cmd")
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-09-28T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-09-28T10:00:00-05:00",
+	}, "commit", "-m", "Day 1 commit")
+
+	// Day 2: touches two files in two directories under top-level dir pkg/
+	if err := os.MkdirAll(filepath.Join(dir, "pkg", "service", "client"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg/service/client: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pkg", "service", "client", "client.go"), []byte("package client\n"), 0o644); err != nil {
+		t.Fatalf("writing client.go: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "pkg", "service", "server"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg/service/server: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pkg", "service", "server", "server.go"), []byte("package server\n"), 0o644); err != nil {
+		t.Fatalf("writing server.go: %v", err)
+	}
+	runGit(nil, "add", "pkg")
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-09-29T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-09-29T10:00:00-05:00",
+	}, "commit", "-m", "Day 2 commit")
+
+	// Day 3: changes files under internal/
+	if err := os.MkdirAll(filepath.Join(dir, "internal", "store"), 0o755); err != nil {
+		t.Fatalf("mkdir internal/store: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "internal", "store", "store.go"), []byte("package store\n"), 0o644); err != nil {
+		t.Fatalf("writing store.go: %v", err)
+	}
+	runGit(nil, "add", "internal")
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-09-30T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-09-30T10:00:00-05:00",
+	}, "commit", "-m", "Day 3 commit")
+
+	ctx := context.Background()
+
+	// Assert Day 1 (first-commit / empty tree day)
+	w1, err := NewDayWindow("2026-09-28", loc, now)
+	if err != nil {
+		t.Fatalf("NewDayWindow day1: %v", err)
+	}
+	meta1, err := ScanRepositoryDay(ctx, dir, w1)
+	if err != nil {
+		t.Fatalf("ScanRepositoryDay day1: %v", err)
+	}
+	if meta1 == nil {
+		t.Fatal("expected non-nil meta1 for day 1")
+	}
+	expectedShortstat1 := "1 file changed, 1 insertion(+)"
+	if meta1.Shortstat != expectedShortstat1 {
+		t.Errorf("day 1 Shortstat = %q, want %q", meta1.Shortstat, expectedShortstat1)
+	}
+	expectedPackages1 := []string{"cmd/app"}
+	if !slices.Equal(meta1.TopPackages, expectedPackages1) {
+		t.Errorf("day 1 TopPackages = %v, want %v", meta1.TopPackages, expectedPackages1)
+	}
+
+	// Assert Day 2
+	w2, err := NewDayWindow("2026-09-29", loc, now)
+	if err != nil {
+		t.Fatalf("NewDayWindow day2: %v", err)
+	}
+	meta2, err := ScanRepositoryDay(ctx, dir, w2)
+	if err != nil {
+		t.Fatalf("ScanRepositoryDay day2: %v", err)
+	}
+	if meta2 == nil {
+		t.Fatal("expected non-nil meta2 for day 2")
+	}
+	expectedShortstat2 := "2 files changed, 2 insertions(+)"
+	if meta2.Shortstat != expectedShortstat2 {
+		t.Errorf("day 2 Shortstat = %q, want %q", meta2.Shortstat, expectedShortstat2)
+	}
+	expectedPackages2 := []string{"pkg/service"}
+	if !slices.Equal(meta2.TopPackages, expectedPackages2) {
+		t.Errorf("day 2 TopPackages = %v, want %v", meta2.TopPackages, expectedPackages2)
+	}
+
+	// Assert Day 3
+	w3, err := NewDayWindow("2026-09-30", loc, now)
+	if err != nil {
+		t.Fatalf("NewDayWindow day3: %v", err)
+	}
+	meta3, err := ScanRepositoryDay(ctx, dir, w3)
+	if err != nil {
+		t.Fatalf("ScanRepositoryDay day3: %v", err)
+	}
+	if meta3 == nil {
+		t.Fatal("expected non-nil meta3 for day 3")
+	}
+	expectedShortstat3 := "1 file changed, 1 insertion(+)"
+	if meta3.Shortstat != expectedShortstat3 {
+		t.Errorf("day 3 Shortstat = %q, want %q", meta3.Shortstat, expectedShortstat3)
+	}
+	expectedPackages3 := []string{"internal/store"}
+	if !slices.Equal(meta3.TopPackages, expectedPackages3) {
+		t.Errorf("day 3 TopPackages = %v, want %v", meta3.TopPackages, expectedPackages3)
 	}
 }
