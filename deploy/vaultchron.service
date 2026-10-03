@@ -1,9 +1,14 @@
+# Environment file format is KEY=value lines without export or quotes problems.
+# If installed to a custom directory, override ExecStart:
+#   systemctl --user edit vaultchron.service
+# View service execution logs via:
+#   journalctl --user -u vaultchron
+
 [Unit]
 Description=VaultChron Devlog Engine
-After=network.target
 
 [Service]
 Type=oneshot
-# Adjust WorkingDirectory and ExecStart to your installation path (e.g. /opt/vaultchron).
-WorkingDirectory=/opt/vaultchron
-ExecStart=/opt/vaultchron/deploy/vaultchron.sh
+EnvironmentFile=-%h/.config/vaultchron/env
+ExecStart=%h/.local/bin/vaultchron
+TimeoutStartSec=45min

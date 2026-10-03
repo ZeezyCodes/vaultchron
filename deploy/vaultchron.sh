@@ -4,21 +4,22 @@
 #
 # Exports environment variables from ~/.config/vaultchron/env, navigates to the
 # binary location, and executes vaultchron with the production config.
-# Adjust VAULTCHRON_HOME or edit the default installation path below.
 #
 set -euo pipefail
 
 # --------------------------------------------------------------------------- #
-# Environment
+# Logging & Environment
 # --------------------------------------------------------------------------- #
-ENV_FILE="${HOME}/.config/vaultchron/env"
 LOG_DIR="${HOME}/.config/vaultchron/logs"
 LOG_FILE="${LOG_DIR}/vaultchron.log"
 
-# Ensure log directory exists.
+# Ensure log directory exists before any other action.
 mkdir -p "$LOG_DIR"
 
-# Export environment variables (e.g. GOOGLE_API_KEY) from env file if present.
+# Redirect stdout and stderr of the whole script to vaultchron.log.
+exec >> "$LOG_FILE" 2>&1
+
+ENV_FILE="${HOME}/.config/vaultchron/env"
 if [[ -f "$ENV_FILE" ]]; then
     set -a
     # shellcheck disable=SC1090
@@ -29,20 +30,33 @@ fi
 # --------------------------------------------------------------------------- #
 # Execution
 # --------------------------------------------------------------------------- #
-# Installation directory — adjust to your deployment location (e.g. /opt/vaultchron).
-VAULTCHRON_DIR="${VAULTCHRON_HOME:-/opt/vaultchron}"
-cd "$VAULTCHRON_DIR"
-
-# Redirect all output to the log file.
-exec >> "$LOG_FILE" 2>&1
-
-echo "=== vaultchron run started at $(date -u '+%Y-%m-%dT%H:%M:%SZ') ==="
-
-if ./vaultchron -config "$VAULTCHRON_DIR/config.yaml"; then
-    EXIT_CODE=0
+if [[ -n "${VAULTCHRON_HOME:-}" ]]; then
+    if [[ ! -d "$VAULTCHRON_HOME" ]]; then
+        echo "vaultchron: VAULTCHRON_HOME $VAULTCHRON_HOME does not exist"
+        exit 1
+    fi
+    cd "$VAULTCHRON_HOME"
+    echo "=== vaultchron run started at $(date -u '+%Y-%m-%dT%H:%M:%SZ') ==="
+    if ./vaultchron -config "$VAULTCHRON_HOME/config.yaml"; then
+        EXIT_CODE=0
+    else
+        EXIT_CODE=$?
+    fi
+    echo "=== vaultchron run finished at $(date -u '+%Y-%m-%dT%H:%M:%SZ') with exit code $EXIT_CODE ==="
+    exit $EXIT_CODE
 else
-    EXIT_CODE=$?
+    PATH="${HOME}/.local/bin:${PATH}"
+    export PATH
+    if ! command -v vaultchron >/dev/null; then
+        echo "vaultchron: not found on PATH (looked in $HOME/.local/bin); install it or set VAULTCHRON_HOME"
+        exit 1
+    fi
+    echo "=== vaultchron run started at $(date -u '+%Y-%m-%dT%H:%M:%SZ') ==="
+    if vaultchron; then
+        EXIT_CODE=0
+    else
+        EXIT_CODE=$?
+    fi
+    echo "=== vaultchron run finished at $(date -u '+%Y-%m-%dT%H:%M:%SZ') with exit code $EXIT_CODE ==="
+    exit $EXIT_CODE
 fi
-
-echo "=== vaultchron run finished at $(date -u '+%Y-%m-%dT%H:%M:%SZ') with exit code $EXIT_CODE ==="
-exit $EXIT_CODE

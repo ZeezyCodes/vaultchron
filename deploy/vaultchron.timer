@@ -1,3 +1,4 @@
+# VaultChron daily timer (runs at 07:00 daily, catch-up handles missed days).
 [Unit]
 Description=Daily VaultChron Devlog Engine
 
