@@ -24,17 +24,36 @@ type VaultConfig struct {
 
 // ScanConfig defines repository discovery scan parameters.
 type ScanConfig struct {
-	Roots    []string `yaml:"roots"`
-	MaxDepth int      `yaml:"max_depth"`
-	Excludes []string `yaml:"excludes"`
+	Roots       []string `yaml:"roots"`
+	MaxDepth    int      `yaml:"max_depth"`
+	Excludes    []string `yaml:"excludes"`
+	CatchUpDays *int     `yaml:"catch_up_days,omitempty"`
+}
+
+// CatchUpDaysVal returns the resolved catch-up days, defaulting to 7 if omitted or nil.
+func (s ScanConfig) CatchUpDaysVal() int {
+	if s.CatchUpDays == nil {
+		return 7
+	}
+	return *s.CatchUpDays
 }
 
 // LLMConfig defines the language model provider, base URL, and waterfall fallback chain.
 type LLMConfig struct {
-	Provider  string   `yaml:"provider,omitempty"`
-	BaseURL   string   `yaml:"base_url,omitempty"`
-	Waterfall []string `yaml:"waterfall"`
-	APIKeyEnv string   `yaml:"api_key_env"`
+	Provider       string   `yaml:"provider,omitempty"`
+	BaseURL        string   `yaml:"base_url,omitempty"`
+	Waterfall      []string `yaml:"waterfall"`
+	APIKeyEnv      string   `yaml:"api_key_env"`
+	MaxCallsPerRun *int     `yaml:"max_calls_per_run,omitempty"`
+}
+
+// MaxCallsPerRunVal returns the resolved maximum LLM calls per run, defaulting to 20 if omitted or nil.
+// A value of 0 indicates unlimited calls.
+func (l LLMConfig) MaxCallsPerRunVal() int {
+	if l.MaxCallsPerRun == nil {
+		return 20
+	}
+	return *l.MaxCallsPerRun
 }
 
 // AgentLogsConfig defines paths to agent session log directories and controls
@@ -120,7 +139,7 @@ func Load(path string) (*Config, error) {
 
 	def := DefaultConfig()
 
-	// Merge missing or zero fields with DefaultConfig() defaults:
+	// - Scan.CatchUpDays (defaults to 7 if omitted)
 	// - Scan.MaxDepth (defaults to 3 if zero/omitted)
 	// - Scan.Excludes (defaults to standard ignore list if empty)
 	// - Vault.IndexFile (defaults to "00-Dev-Index.md" if empty)
@@ -131,8 +150,13 @@ func Load(path string) (*Config, error) {
 	// - LLM.BaseURL (defaults to DefaultLLMBaseURL if empty)
 	// - LLM.Waterfall (defaults to standard models if empty)
 	// - LLM.APIKeyEnv (defaults to "GOOGLE_API_KEY" if empty)
+	// - LLM.MaxCallsPerRun (defaults to 20 if omitted; 0 means unlimited)
 	// - AgentLogs.AntigravityPath (defaults to ~/.antigravity if empty)
 	// - AgentLogs.PoolsidePath (defaults to ~/.poolside if empty)
+	if cfg.Scan.CatchUpDays == nil {
+		d := def.Scan.CatchUpDaysVal()
+		cfg.Scan.CatchUpDays = &d
+	}
 	if cfg.Scan.MaxDepth == 0 {
 		cfg.Scan.MaxDepth = def.Scan.MaxDepth
 	}
@@ -162,6 +186,10 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.LLM.APIKeyEnv == "" {
 		cfg.LLM.APIKeyEnv = def.LLM.APIKeyEnv
+	}
+	if cfg.LLM.MaxCallsPerRun == nil {
+		d := def.LLM.MaxCallsPerRunVal()
+		cfg.LLM.MaxCallsPerRun = &d
 	}
 	if cfg.AgentLogs.AntigravityPath == "" {
 		cfg.AgentLogs.AntigravityPath = def.AgentLogs.AntigravityPath
@@ -201,6 +229,12 @@ func Load(path string) (*Config, error) {
 	if cfg.Scan.MaxDepth < 1 {
 		return nil, fmt.Errorf("invalid config: scan.max_depth must be at least 1, got %d", cfg.Scan.MaxDepth)
 	}
+	if cfg.Scan.CatchUpDays != nil && *cfg.Scan.CatchUpDays < 1 {
+		return nil, fmt.Errorf("invalid config: scan.catch_up_days must be at least 1, got %d", *cfg.Scan.CatchUpDays)
+	}
+	if cfg.LLM.MaxCallsPerRun != nil && *cfg.LLM.MaxCallsPerRun < 0 {
+		return nil, fmt.Errorf("invalid config: llm.max_calls_per_run must be non-negative, got %d", *cfg.LLM.MaxCallsPerRun)
+	}
 
 	return &cfg, nil
 }
@@ -219,6 +253,9 @@ func DefaultConfig() *Config {
 		poolsidePath = os.ExpandEnv("$HOME/.poolside")
 	}
 
+	catchUpDays := 7
+	maxCallsPerRun := 20
+
 	return &Config{
 		Vault: VaultConfig{
 			Path:        vaultPath,
@@ -228,12 +265,13 @@ func DefaultConfig() *Config {
 			RecentDays:  7,
 		},
 		Scan: ScanConfig{
-			Roots:    []string{rootsPath},
-			MaxDepth: 3,
+			Roots:       []string{rootsPath},
+			MaxDepth:    3,
 			Excludes: []string{
 				".nvm", ".local", ".cache",
 				"node_modules", "vendor",
 			},
+			CatchUpDays: &catchUpDays,
 		},
 		LLM: LLMConfig{
 			Provider: "gemini",
@@ -243,7 +281,8 @@ func DefaultConfig() *Config {
 				"gemini-3.7-flash",
 				"gemini-3.6-flash",
 			},
-			APIKeyEnv: "GOOGLE_API_KEY",
+			APIKeyEnv:      "GOOGLE_API_KEY",
+			MaxCallsPerRun: &maxCallsPerRun,
 		},
 		AgentLogs: AgentLogsConfig{
 			Enabled:         false,

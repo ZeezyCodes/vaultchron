@@ -13,6 +13,9 @@ scan:
   roots:
     - ~/projects
   max_depth: 3
+  # Lookback window in calendar days for day-based devlogs when no date flag is passed.
+  # Defaults to 7. Must be >= 1.
+  catch_up_days: 7
   excludes:
     - .nvm
     - .local
@@ -32,6 +35,8 @@ llm:
     - gemini-3.7-flash
     - gemini-3.6-flash
   api_key_env: GOOGLE_API_KEY      # read from environment
+  # Maximum LLM calls allowed per run (0 = unlimited). Defaults to 20.
+  max_calls_per_run: 20
 
 # Optional: Map repository directory names to custom slugs and languages.
 # If omitted or not matched, repository names are automatically slugified

@@ -373,3 +373,173 @@ func TestResolveConfigPath(t *testing.T) {
 		t.Errorf("expected config.yaml over config.example.yaml, got %q", got)
 	}
 }
+
+// TestLoad_CatchUpDays verifies absent, explicit 0, negative, and positive values.
+func TestLoad_CatchUpDays(t *testing.T) {
+	tests := []struct {
+		name      string
+		yaml      string
+		wantErr   bool
+		wantVal   int
+	}{
+		{
+			name: "absent defaults to 7",
+			yaml: `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+`,
+			wantErr: false,
+			wantVal: 7,
+		},
+		{
+			name: "explicit positive 14",
+			yaml: `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+  catch_up_days: 14
+`,
+			wantErr: false,
+			wantVal: 14,
+		},
+		{
+			name: "explicit positive 1",
+			yaml: `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+  catch_up_days: 1
+`,
+			wantErr: false,
+			wantVal: 1,
+		},
+		{
+			name: "explicit 0 is error",
+			yaml: `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+  catch_up_days: 0
+`,
+			wantErr: true,
+		},
+		{
+			name: "negative is error",
+			yaml: `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+  catch_up_days: -3
+`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(tmpFile, []byte(tt.yaml), 0o644); err != nil {
+				t.Fatalf("writing temp config: %v", err)
+			}
+			cfg, err := Load(tmpFile)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Load() err = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if !tt.wantErr {
+				if cfg.Scan.CatchUpDaysVal() != tt.wantVal {
+					t.Errorf("CatchUpDaysVal() = %d, want %d", cfg.Scan.CatchUpDaysVal(), tt.wantVal)
+				}
+				if cfg.Scan.CatchUpDays == nil || *cfg.Scan.CatchUpDays != tt.wantVal {
+					t.Errorf("CatchUpDays pointer = %v, want %d", cfg.Scan.CatchUpDays, tt.wantVal)
+				}
+			}
+		})
+	}
+}
+
+// TestLoad_MaxCallsPerRun verifies absent, explicit 0, negative, and positive values.
+func TestLoad_MaxCallsPerRun(t *testing.T) {
+	tests := []struct {
+		name      string
+		yaml      string
+		wantErr   bool
+		wantVal   int
+	}{
+		{
+			name: "absent defaults to 20",
+			yaml: `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+`,
+			wantErr: false,
+			wantVal: 20,
+		},
+		{
+			name: "explicit 0 is allowed and means unlimited",
+			yaml: `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+llm:
+  max_calls_per_run: 0
+`,
+			wantErr: false,
+			wantVal: 0,
+		},
+		{
+			name: "explicit positive 50",
+			yaml: `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+llm:
+  max_calls_per_run: 50
+`,
+			wantErr: false,
+			wantVal: 50,
+		},
+		{
+			name: "negative is error",
+			yaml: `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+llm:
+  max_calls_per_run: -1
+`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(tmpFile, []byte(tt.yaml), 0o644); err != nil {
+				t.Fatalf("writing temp config: %v", err)
+			}
+			cfg, err := Load(tmpFile)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Load() err = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if !tt.wantErr {
+				if cfg.LLM.MaxCallsPerRunVal() != tt.wantVal {
+					t.Errorf("MaxCallsPerRunVal() = %d, want %d", cfg.LLM.MaxCallsPerRunVal(), tt.wantVal)
+				}
+				if cfg.LLM.MaxCallsPerRun == nil || *cfg.LLM.MaxCallsPerRun != tt.wantVal {
+					t.Errorf("MaxCallsPerRun pointer = %v, want %d", cfg.LLM.MaxCallsPerRun, tt.wantVal)
+				}
+			}
+		})
+	}
+}
