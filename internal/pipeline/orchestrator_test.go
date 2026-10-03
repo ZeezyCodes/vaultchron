@@ -39,6 +39,13 @@ func TestGetProjectTags(t *testing.T) {
 			wantLang:    "go",
 		},
 		{
+			name:        "nil config with MyAwesomeApp falls back to slugify and go",
+			cfg:         nil,
+			projectName: "MyAwesomeApp",
+			wantSlug:    "myawesomeapp",
+			wantLang:    "go",
+		},
+		{
 			name: "empty project tags falls back to slugify and go",
 			cfg: &config.Config{
 				ProjectTags: map[string]config.ProjectTag{},
@@ -55,6 +62,28 @@ func TestGetProjectTags(t *testing.T) {
 						Slug: "special-slug",
 						Lang: "rust",
 					},
+					"AcmeWidgets.com": {
+						Slug: "acmewidgets",
+						Lang: "go",
+					},
+					"Homelab": {
+						Slug: "homelab",
+						Lang: "docker",
+					},
+				},
+			},
+			projectName: "AcmeWidgets.com",
+			wantSlug:    "acmewidgets",
+			wantLang:    "go",
+		},
+		{
+			name: "configured project tag takes precedence for special project",
+			cfg: &config.Config{
+				ProjectTags: map[string]config.ProjectTag{
+					"SpecialProject": {
+						Slug: "special-slug",
+						Lang: "rust",
+					},
 				},
 			},
 			projectName: "SpecialProject",
@@ -63,6 +92,20 @@ func TestGetProjectTags(t *testing.T) {
 		},
 		{
 			name: "unmatched project tag falls back to slugify and go",
+			cfg: &config.Config{
+				ProjectTags: map[string]config.ProjectTag{
+					"Homelab": {
+						Slug: "homelab",
+						Lang: "docker",
+					},
+				},
+			},
+			projectName: "sampleAuth",
+			wantSlug:    "sampleauth",
+			wantLang:    "go",
+		},
+		{
+			name: "unmatched project tag with other project falls back to slugify and go",
 			cfg: &config.Config{
 				ProjectTags: map[string]config.ProjectTag{
 					"OtherProject": {
@@ -95,8 +138,12 @@ func TestSlugify(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"Hello World", "hello-world"},
+		{"Simple", "simple"},
 		{"AcmeWidgets.com", "acmewidgets-com"},
+		{"--multiple---hyphens--", "multiple-hyphens"},
+		{"Special!@#Characters$%", "special-characters"},
+		{"123-numbers-456", "123-numbers-456"},
+		{"Hello World", "hello-world"},
 		{"special_chars!@#$%^&*()", "special-chars"},
 		{"--leading-trailing--", "leading-trailing"},
 		{"multiple   spaces", "multiple-spaces"},
