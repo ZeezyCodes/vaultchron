@@ -340,6 +340,7 @@ VaultChron defaults to generating structured devlogs on a local calendar-day bou
 - **Skip-Existing & Partial Notes:** Existing devlogs are skipped by default. However, if an existing note for a previous day is marked `partial: true` (e.g. generated before the day concluded), it is automatically regenerated. Re-running on a partial note for today is skipped unless `-force` is passed.
 - **Targeted Dates & Ranges:** Use `-date YYYY-MM-DD` for a specific day (including today with `partial: true`), or `-from YYYY-MM-DD [-to YYYY-MM-DD]` for a historical date range.
 - **Call Cap Protection:** Execution respects `llm.max_calls_per_run` (default 20, 0 = unlimited) or `-max-calls`. Once the cap is reached, cheap checks continue and remaining pairs are reported as `PENDING` without invoking the LLM, allowing subsequent runs to resume where the last run stopped.
+- **Index Handling:** If the vault index file does not exist, index updates are skipped with a warning and notes are written normally. If the index exists but is unusable (for example, missing required section headers), an update failure stops the run: devlog notes are not written, remaining pairs stay pending, and you can fix the index and run again to continue.
 - **Empty Days:** Repo-days with zero commits are never written into notes, even when `-force` is supplied.
 - **Legacy Compatibility:** Supplying `-window` retains the previous reflog window collection workflow. Note that agent session log harvesting (`agent_logs.enabled`) is active only in legacy `-window` mode.
 
