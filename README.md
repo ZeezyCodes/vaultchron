@@ -299,10 +299,12 @@ VaultChron looks for `config.yaml` in the working directory (falling back to `co
 | `scan` | `roots` | list | List of root paths searched for git repositories (e.g. `[~/projects]`). |
 | `scan` | `max_depth` | int | Directory traversal depth limit for discovering git repos (default: `3`). |
 | `scan` | `excludes` | list | Directory names or patterns to ignore during scan (e.g. `.nvm`, `node_modules`, `vendor`). |
+| `scan` | `catch_up_days` | int | Number of past calendar days to scan in default day mode (default: `7`, min: `1`). |
 | `llm` | `provider` | string | Identifier for LLM provider (default: `gemini`). |
 | `llm` | `base_url` | string | *Optional.* OpenAI-compatible endpoint URL. Defaults to Gemini OpenAI-compatible endpoint (`https://generativelanguage.googleapis.com/v1beta/openai`). Compatible with OpenAI (`https://api.openai.com/v1`), OpenRouter (`https://openrouter.ai/api/v1`), or local providers such as Ollama (`http://localhost:11434/v1`) and LM Studio. |
 | `llm` | `waterfall` | list | Ordered list of models to try. Fallback proceeds sequentially on HTTP 429 rate limit errors (e.g. `[gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash]`). |
 | `llm` | `api_key_env` | string | Name of the environment variable containing the API key (default: `GOOGLE_API_KEY`). |
+| `llm` | `max_calls_per_run` | int | Maximum LLM calls allowed per execution run; once reached, remaining items report `PENDING` (default: `20`, `0` = unlimited). |
 | `project_tags` | `<DirName>` | object | *Optional.* Custom mapping for repository directory names to define `slug` and `lang`. If omitted, slugs are auto-generated and language defaults to `go`. |
 | `agent_logs` | `enabled` | bool | Enables harvesting local AI agent session logs (e.g. Antigravity, Poolside) to supply session goals and outcomes to the prompt. **Default: `false`** for privacy. |
 | `agent_logs` | `antigravity_path` | string | Path to local Antigravity session directory (default: `~/.antigravity`). |
@@ -317,13 +319,29 @@ Main engine for scanning git activity, prompting LLM synthesis, and updating the
 | Flag | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `-config` | string | `""` | path to config.yaml (defaults to config.yaml or config.example.yaml) |
+| `-date` | string | `""` | single calendar day to generate devlog for (`YYYY-MM-DD`, today writes `partial: true`) |
+| `-from` | string | `""` | start date for devlog range (`YYYY-MM-DD`, inclusive) |
+| `-to` | string | `""` | end date for devlog range (`YYYY-MM-DD`, inclusive, defaults to yesterday) |
+| `-catch-up` | int | `0` | number of catch-up days in default day mode (overrides `scan.catch_up_days`, min: `1`) |
+| `-max-calls` | int | `-1` | maximum LLM calls allowed per run (`0` = unlimited, overrides `llm.max_calls_per_run`) |
 | `-scan` | bool | `false` | run collector only: discover repos, harvest metadata, print results, and exit 0 |
-| `-window` | string | `"24.hours.ago"` | git time window for --since log query and HEAD@{<window>} diff reference |
-| `-dry-run` | bool | `false` | skip LLM calls and vault writes; render populated DevlogData preview to stdout |
+| `-dry-run` | bool | `false` | skip LLM calls and vault writes; render populated plan preview to stdout |
 | `-repo` | string | `""` | target a single repository by base directory name (e.g. my-project) |
-| `-force` | bool | `false` | process repositories even if they have zero commits in the window |
+| `-force` | bool | `false` | overwrite existing notes; process repositories even if they have zero commits in legacy window mode |
+| `-window` | string | `"24.hours.ago"` | legacy git time window for --since log query and HEAD@{<window>} diff reference |
 | `-migrate-vault` | bool | `false` | migrate legacy devlog notes in vault to v3 callout taxonomy in-place |
 | `-migrate-v3` | bool | `false` | alias for -migrate-vault |
+
+### Day-Based Devlogs & Catch-Up
+
+VaultChron defaults to generating structured devlogs on a local calendar-day boundary rather than rolling 24-hour time windows:
+
+- **Catch-Up Lookback:** When run without date flags, VaultChron scans the preceding calendar days `[today - N, yesterday]` (where `N` is `scan.catch_up_days`, default 7, or `-catch-up`). Processing is day-major and chronological (oldest day first across all discovered repositories). Today is not generated during default catch-up runs.
+- **Skip-Existing & Partial Notes:** Existing devlogs are skipped by default. However, if an existing note for a previous day is marked `partial: true` (e.g. generated before the day concluded), it is automatically regenerated. Re-running on a partial note for today is skipped unless `-force` is passed.
+- **Targeted Dates & Ranges:** Use `-date YYYY-MM-DD` for a specific day (including today with `partial: true`), or `-from YYYY-MM-DD [-to YYYY-MM-DD]` for a historical date range.
+- **Call Cap Protection:** Execution respects `llm.max_calls_per_run` (default 20, 0 = unlimited) or `-max-calls`. Once the cap is reached, cheap checks continue and remaining pairs are reported as `PENDING` without invoking the LLM, allowing subsequent runs to resume where the last run stopped.
+- **Empty Days:** Repo-days with zero commits are never written into notes, even when `-force` is supplied.
+- **Legacy Compatibility:** Supplying `-window` retains the previous reflog window collection workflow. Note that agent session log harvesting (`agent_logs.enabled`) is active only in legacy `-window` mode.
 
 ### `vaultchron_migrate`
 
