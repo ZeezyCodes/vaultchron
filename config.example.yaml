@@ -1,10 +1,12 @@
 # VaultChron configuration template.
-# Copy this file to config.yaml and adjust paths and settings for your environment.
+# Copy this file to ~/.config/vaultchron/config.yaml (Linux/macOS) or %APPDATA%\vaultchron\config.yaml (Windows)
+# or ./config.yaml, and adjust paths and settings for your environment.
 # Paths starting with ~ or containing environment variables (e.g. $HOME) will be expanded.
 
 vault:
   path: ~/vault
   index_file: 00-Dev-Index.md
+  # Note: rollups_dir, projects_dir, and recent_days are reserved, currently unused.
   rollups_dir: Daily-Rollups
   projects_dir: Projects
   recent_days: 7

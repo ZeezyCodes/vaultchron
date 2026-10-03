@@ -1,7 +1,6 @@
 # VaultChron
 
 [![CI](https://github.com/ZeezyCodes/vaultchron/actions/workflows/ci.yml/badge.svg)](https://github.com/ZeezyCodes/vaultchron/actions/workflows/ci.yml)
-*(Note: CI badge activates once GitHub Actions executes on the public repository)*
 
 VaultChron automatically synthesizes structured, publication-grade developer logs from your local git repositories into an Obsidian-style markdown vault using an LLM.
 
@@ -52,42 +51,35 @@ The installer scripts download prebuilt binaries from GitHub Releases, verify ar
 
 ### First run
 
-1. Download the example configuration into your working directory:
+1. Create the configuration file at your per-user location:
 
    Linux and macOS:
    ```bash
-   curl -fsSLo config.yaml https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/config.example.yaml
+   mkdir -p ~/.config/vaultchron
+   curl -fsSLo ~/.config/vaultchron/config.yaml https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/config.example.yaml
    ```
 
    Windows (PowerShell):
    ```powershell
-   irm https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/config.example.yaml -OutFile config.yaml
+   New-Item -ItemType Directory -Force "$env:APPDATA\vaultchron"
+   irm https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/config.example.yaml -OutFile "$env:APPDATA\vaultchron\config.yaml"
    ```
 
-2. Open `config.yaml` to set `vault.path` (your Obsidian vault directory) and `scan.roots` (directories containing git repositories to scan).
+2. Open `~/.config/vaultchron/config.yaml` (or `$env:APPDATA\vaultchron\config.yaml` on Windows) to set `vault.path` (your Obsidian vault directory) and `scan.roots` (directories containing git repositories to scan).
 3. Set your LLM API key in your environment (e.g. `export GOOGLE_API_KEY="..."`).
 4. Test with a dry run:
    ```bash
    vaultchron -dry-run
    ```
-   VaultChron looks for `config.yaml` in the working directory by default; use `-config <path>` if your config file is located elsewhere.
+   VaultChron resolves `config.yaml` automatically from your per-user config directory, `$VAULTCHRON_CONFIG`, or the current working directory; use `-config <path>` if your config file is located elsewhere.
 
 ## Requirements
 
 - **Go**: Version `1.27.1` or higher (only needed to build from source or use `go install`).
-  > [!NOTE]
-  > `go.mod` pins `go 1.27.1` as the minimum toolchain, and running linters locally needs `golangci-lint` v2.14.0+ because older releases cannot read Go 1.27 export data.
 - **Git**: Git CLI installed and accessible on `$PATH`.
 - **LLM API Key or Endpoint**: An API key for Google Gemini (`GOOGLE_API_KEY`), or an alternative provider API key if using an OpenAI-compatible endpoint.
 
-## Installation
-
-### Prerequisites
-
-Before running VaultChron, ensure the following prerequisites are met:
-- **Git**: Git CLI installed and available on `$PATH`.
-- **LLM API Key**: API key configured in your environment (e.g. `export GOOGLE_API_KEY="..."`).
-- **Configuration**: Copy `config.example.yaml` to `config.yaml` (`cp config.example.yaml config.yaml`) and configure your vault and scan directories.
+## Other ways to install
 
 ### Manual install (download and verify)
 
@@ -253,49 +245,33 @@ go build -o vaultchron ./cmd/vaultchron
 go build -o vaultchron_migrate ./cmd/vaultchron_migrate
 ```
 
-## Quick Start
+## Configuration
 
-1. **Initialize configuration:**
-   Copy the example configuration to `config.yaml`:
-   ```bash
-   cp config.example.yaml config.yaml
-   ```
+VaultChron resolves its configuration file by checking the following locations in order (first match wins):
 
-2. **Configure your environment:**
-   Set your LLM API key (or add it to `~/.config/vaultchron/env`):
-   ```bash
-   export GOOGLE_API_KEY="your-api-key-here"
-   ```
+1. **Command-line flag**: The `-config <path>` flag. If provided, the file must exist; VaultChron does not fall through to other locations if it is missing.
+2. **Environment variable**: `$VAULTCHRON_CONFIG`. If set, the file must exist; VaultChron does not fall through if it is missing.
+3. **Working directory**: `./config.yaml` in the current working directory.
+4. **Per-user configuration**:
+   - **Windows**: `%APPDATA%\vaultchron\config.yaml`
+   - **Linux, macOS, and Unix**: `$XDG_CONFIG_HOME/vaultchron/config.yaml` if `$XDG_CONFIG_HOME` is set and absolute, otherwise `~/.config/vaultchron/config.yaml`.
+5. **Example fallback**: `./config.example.yaml` in the current working directory (only allowed when running in `-scan` or `-dry-run` mode). Real runs and vault migrations strictly refuse to run against the example file.
 
-3. **Verify repository discovery with `-scan`:**
-   Inspect which git repositories are discovered and their recent commit volume without making LLM calls or modifying your vault:
-   ```bash
-   ./vaultchron -scan
-   ```
+If no configuration file is found, VaultChron outputs the list of searched paths and instructions for creating one, then exits with code 1.
 
-4. **Dry-run generation:**
-   Preview generated devlog data structures to stdout without calling the LLM or writing files:
-   ```bash
-   ./vaultchron -dry-run
-   ```
+Optional environment files for loading API keys without modifying system environment variables:
+- **Linux & macOS**: `~/.config/vaultchron/env`
+- **Windows**: `%APPDATA%\vaultchron\env`
 
-5. **Generate devlogs:**
-   Run VaultChron for real to generate notes and update your Obsidian index:
-   ```bash
-   ./vaultchron
-   ```
-
-## Configuration Reference
-
-VaultChron looks for `config.yaml` in the working directory (falling back to `config.example.yaml` if not found), or loads the path specified via `-config`. Tilde (`~`) and environment variables (`$HOME`) in paths are automatically expanded.
+Tilde (`~`) and environment variables (`$HOME`) in paths are automatically expanded.
 
 | Section | Key | Type | Description |
 | :--- | :--- | :--- | :--- |
 | `vault` | `path` | string | Target directory of your Obsidian vault (e.g. `~/vault`). |
 | `vault` | `index_file` | string | Filename for the root dev index (default: `00-Dev-Index.md`). |
-| `vault` | `rollups_dir` | string | Subdirectory for daily rollups (default: `Daily-Rollups`). |
-| `vault` | `projects_dir` | string | Subdirectory for project logs (default: `Projects`). |
-| `vault` | `recent_days` | int | Number of rolling days tracked in the index (default: `7`). |
+| `vault` | `rollups_dir` | string | *Reserved, currently unused.* Subdirectory for daily rollups (default: `Daily-Rollups`). |
+| `vault` | `projects_dir` | string | *Reserved, currently unused.* Subdirectory for project logs (default: `Projects`). |
+| `vault` | `recent_days` | int | *Reserved, currently unused.* Number of rolling days tracked in the index (default: `7`). |
 | `scan` | `roots` | list | List of root paths searched for git repositories (e.g. `[~/projects]`). |
 | `scan` | `max_depth` | int | Directory traversal depth limit for discovering git repos (default: `3`). |
 | `scan` | `excludes` | list | Directory names or patterns to ignore during scan (e.g. `.nvm`, `node_modules`, `vendor`). |
@@ -318,7 +294,7 @@ Main engine for scanning git activity, prompting LLM synthesis, and updating the
 
 | Flag | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `-config` | string | `""` | path to config.yaml (defaults to config.yaml or config.example.yaml) |
+| `-config` | string | `""` | path to config.yaml (order: -config, $VAULTCHRON_CONFIG, ./config.yaml, per-user config, ./config.example.yaml for scan/dry-run) |
 | `-date` | string | `""` | single calendar day to generate devlog for (`YYYY-MM-DD`, today writes `partial: true`) |
 | `-from` | string | `""` | start date for devlog range (`YYYY-MM-DD`, inclusive) |
 | `-to` | string | `""` | end date for devlog range (`YYYY-MM-DD`, inclusive, defaults to yesterday) |
@@ -332,7 +308,18 @@ Main engine for scanning git activity, prompting LLM synthesis, and updating the
 | `-migrate-vault` | bool | `false` | migrate legacy devlog notes in vault to v3 callout taxonomy in-place |
 | `-migrate-v3` | bool | `false` | alias for -migrate-vault |
 
-### Day-Based Devlogs & Catch-Up
+### `vaultchron_migrate`
+
+Standalone migration utility for retrofitting existing Obsidian devlogs to the v3 callout taxonomy without requiring LLM invocations.
+
+| Flag | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `-vault` | string | `""` | path to the Obsidian vault root (defaults to config.yaml vault.path or default vault path) |
+| `-config` | string | `""` | path to config.yaml (order: -config, $VAULTCHRON_CONFIG, ./config.yaml, per-user config, ./config.example.yaml for dry-run) |
+| `-file` | string | `""` | migrate a single devlog markdown file instead of the whole vault |
+| `-dry-run` | bool | `false` | display what would be migrated without modifying files |
+
+## Day-based devlogs
 
 VaultChron defaults to generating structured devlogs on a local calendar-day boundary rather than rolling 24-hour time windows:
 
@@ -344,16 +331,89 @@ VaultChron defaults to generating structured devlogs on a local calendar-day bou
 - **Empty Days:** Repo-days with zero commits are never written into notes, even when `-force` is supplied.
 - **Legacy Compatibility:** Supplying `-window` retains the previous reflog window collection workflow. Note that agent session log harvesting (`agent_logs.enabled`) is active only in legacy `-window` mode.
 
-### `vaultchron_migrate`
+### Existing vault
 
-Standalone migration utility for retrofitting existing Obsidian devlogs to the v3 callout taxonomy without requiring LLM invocations.
+When pointing VaultChron to an existing Obsidian vault:
+- **Target vault location**: Set `vault.path` in your configuration to the root directory of your existing Obsidian vault.
+- **Contained write scope**: Devlog notes are written only under `<vault>/Projects/<repo>/Devlog/` (e.g. `<vault>/Projects/my-project/Devlog/2026-10-02.md`). VaultChron will not touch other directories or notes in your vault.
+- **In-place index maintenance**: The root index file (`00-Dev-Index.md` by default) is updated in place under a `## Recent Dev Logs` or `## Recent Activity` heading, prepending new summary rows without disturbing your existing notes or surrounding content.
+- **Preservation of existing notes**: Notes already written for complete days are skipped automatically, preventing unintended overwrites.
+- **Index error safeguard**: If the index file exists but cannot be updated (see Index Handling above), VaultChron aborts the run before writing note files to disk.
+- **Backup recommendation**: Always back up or commit your Obsidian vault to version control before running VaultChron for the first time against live documentation.
+- **Config safety**: Real runs now refuse to start without a valid configuration file, preventing unintended runs against default or example templates.
 
-| Flag | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `-vault` | string | `""` | path to the Obsidian vault root (defaults to config.yaml vault.path or default vault path) |
-| `-config` | string | `""` | path to config.yaml |
-| `-file` | string | `""` | migrate a single devlog markdown file instead of the whole vault |
-| `-dry-run` | bool | `false` | display what would be migrated without modifying files |
+### Missed days
+
+VaultChron handles missed days and offline periods automatically:
+- **Automatic catch-up**: By default, every run inspects the preceding 7 calendar days (`scan.catch_up_days` or `-catch-up`), automatically identifying and generating devlogs for any days that lack notes.
+- **Historical backfill ranges**: To generate devlogs for an extended past period, supply `-from` and `-to`:
+  ```bash
+  vaultchron -from 2026-09-01 -to 2026-09-15
+  ```
+- **Call cap and re-running**: Large backfills honor the `llm.max_calls_per_run` budget (default 20 calls, or `-max-calls`). If a run reaches the call cap, ungenerated days report `PENDING` without making LLM calls. Simply running `vaultchron` again resumes where the previous run stopped until all missed days are filled.
+- **Limitations**:
+  - **Checked-out branch**: Only the currently checked-out branch is scanned for each repository.
+  - **Committer timestamps**: Commit inclusion is based on git committer dates in local calendar time.
+  - **Agent logs**: Local AI agent session logs (`agent_logs.enabled`) are not used in day mode (session log harvesting is supported only in legacy `-window` mode).
+
+## Scheduling
+
+VaultChron can run unattended on a daily schedule across Linux, macOS, and Windows. Missed days resulting from sleep, reboot, or offline time are automatically filled by the catch-up mechanism on subsequent runs.
+
+### Linux (systemd)
+
+Set up a systemd user timer to run VaultChron daily at 07:00:
+
+```bash
+mkdir -p ~/.config/systemd/user
+curl -fsSLo ~/.config/systemd/user/vaultchron.service https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/deploy/vaultchron.service
+curl -fsSLo ~/.config/systemd/user/vaultchron.timer https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/deploy/vaultchron.timer
+systemctl --user daemon-reload
+systemctl --user enable --now vaultchron.timer
+```
+
+To allow the user timer to run when you are logged out, optionally enable lingering:
+```bash
+loginctl enable-linger "$USER"
+```
+
+View execution logs with:
+```bash
+journalctl --user -u vaultchron
+```
+
+**Running from a repository checkout**:
+If running VaultChron directly from a git checkout rather than a binary installation on `PATH`, use the provided wrapper script `deploy/vaultchron.sh`. Set `VAULTCHRON_HOME` to your repository directory to have the wrapper change into the checkout and run with `-config "$VAULTCHRON_HOME/config.yaml"`:
+```bash
+export VAULTCHRON_HOME="/path/to/vaultchron"
+deploy/vaultchron.sh
+```
+
+### macOS (launchd)
+
+Schedule VaultChron as a macOS launchd user agent running daily at 07:00:
+
+1. Download and load the launchd property list:
+   ```bash
+   mkdir -p ~/Library/LaunchAgents
+   curl -fsSLo ~/Library/LaunchAgents/io.github.zeezycodes.vaultchron.plist https://raw.githubusercontent.com/ZeezyCodes/vaultchron/main/deploy/macos/io.github.zeezycodes.vaultchron.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.zeezycodes.vaultchron.plist
+   ```
+
+2. To unload and stop the scheduled agent:
+   ```bash
+   launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/io.github.zeezycodes.vaultchron.plist
+   ```
+
+3. Execution logs are appended to:
+   `~/.config/vaultchron/logs/vaultchron.log`
+
+> [!NOTE]
+> The launchd agent configuration is linted via CI (`plutil -lint`) but has not been verified on real macOS hardware. On macOS, a system that is asleep at the scheduled run time (07:00) executes the job upon waking; if the system was powered off, the catch-up mechanism automatically processes missed days during the next run.
+
+### Windows
+
+For Windows task scheduling using `deploy/windows/register-task.ps1` and Scheduled Tasks, see the [Scheduling with Scheduled Tasks](#scheduling-with-scheduled-tasks) section under Windows Setup & Usage above.
 
 ## How It Works
 
@@ -366,34 +426,6 @@ VaultChron orchestrates a deterministic 7-stage pipeline:
 5. **LLM Synthesis**: Submits structured prompt context to the configured LLM endpoint, utilizing model waterfall failover on rate limits (HTTP 429).
 6. **Note Rendering**: Assembles note markdown strictly conforming to the Obsidian Callout v3 specification (`[!note]-`, `[!abstract]`, `[!info]`, `[!bug]`, `[!warning]`, `[!check]`).
 7. **Atomic Vault Write**: Writes notes using temporary file creation and atomic renames, preventing corrupt partial writes, and updates `00-Dev-Index.md` with current project telemetry.
-
-## Deployment
-
-VaultChron can run unattended on a daily schedule using the provided deployment scripts:
-
-### Linux & macOS (systemd)
-
-- **Execution wrapper (`deploy/vaultchron.sh`)**: Sources environment variables from `~/.config/vaultchron/env`, resolves the working directory via `VAULTCHRON_HOME` (defaulting to `/opt/vaultchron`), runs `vaultchron`, and logs stdout/stderr to `~/.config/vaultchron/logs/vaultchron.log`.
-- **Systemd service (`deploy/vaultchron.service`)**: Oneshot service unit invoking `vaultchron.sh`.
-- **Systemd timer (`deploy/vaultchron.timer`)**: Triggers execution daily at 07:00:00 local time with `Persistent=true`.
-
-To set up the systemd timer:
-```bash
-cp deploy/vaultchron.service deploy/vaultchron.timer ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now vaultchron.timer
-```
-
-### Windows (Scheduled Tasks)
-
-- **Execution wrapper (`deploy/windows/vaultchron-run.ps1`)**: Sources environment variables from `%APPDATA%\vaultchron\env`, resolves the installation directory via `$env:VAULTCHRON_HOME` (defaulting to the archive root or `%LOCALAPPDATA%\vaultchron`), executes `vaultchron.exe`, and appends UTF-8 stdout/stderr to `%LOCALAPPDATA%\vaultchron\logs\vaultchron.log`.
-- **Task registration script (`deploy/windows/register-task.ps1`)**: Registers a Windows Scheduled Task executing daily at 07:00 (matching the systemd timer) with `StartWhenAvailable`, battery execution allowed, a 2-hour timeout, and interactive user logon without requiring administrator privileges.
-
-To register or unregister the Scheduled Task:
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1 -Unregister
-```
 
 ## Security
 
