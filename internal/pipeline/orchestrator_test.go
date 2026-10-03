@@ -1369,3 +1369,95 @@ func TestFormatDaySummaryLine(t *testing.T) {
 		})
 	}
 }
+
+func TestResolvePlan_MaxCallsConfigFallback(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	days := []string{"2026-09-28", "2026-09-29", "2026-09-30"}
+	for _, d := range days {
+		fPath := filepath.Join(repoDir, fmt.Sprintf("file_%s.txt", d))
+		if err := os.WriteFile(fPath, []byte("content on "+d+"\n"), 0o644); err != nil {
+			t.Fatalf("writing file: %v", err)
+		}
+		runGit(nil, "add", filepath.Base(fPath))
+		runGit([]string{
+			fmt.Sprintf("GIT_AUTHOR_DATE=%sT10:00:00-05:00", d),
+			fmt.Sprintf("GIT_COMMITTER_DATE=%sT10:00:00-05:00", d),
+		}, "commit", "-m", "Commit on "+d)
+	}
+
+	ts, reqs := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	two := 2
+	cfg.LLM.MaxCallsPerRun = &two
+
+	// Case 1: zero-value options with Visited nil use the configured cap (cfg max_calls_per_run=2, 3 days: 2 written, 1 pending)
+	plan1, err := ResolvePlan(PipelineOptions{
+		From: "2026-09-28",
+		To:   "2026-09-30",
+		Now:  func() time.Time { return now },
+		Loc:  loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan fallback failed: %v", err)
+	}
+	if plan1.MaxCalls != 2 {
+		t.Fatalf("expected plan1.MaxCalls = 2 from config fallback, got %d", plan1.MaxCalls)
+	}
+
+	rows1, counts1, err := RunPlan(context.Background(), cfg, plan1)
+	if err != nil {
+		t.Fatalf("RunPlan failed: %v", err)
+	}
+	if counts1.Written != 2 || counts1.Pending != 1 || counts1.CapPending != 1 {
+		t.Errorf("expected 2 written, 1 pending (cap); got %d written, %d pending (%d cap pending)",
+			counts1.Written, counts1.Pending, counts1.CapPending)
+	}
+	if len(*reqs) != 2 {
+		t.Errorf("expected 2 LLM requests, got %d", len(*reqs))
+	}
+	if rows1[0].Status != "WRITTEN" || rows1[1].Status != "WRITTEN" || rows1[2].Status != "PENDING" {
+		t.Errorf("unexpected rows statuses: %v, %v, %v", rows1[0].Status, rows1[1].Status, rows1[2].Status)
+	}
+	if rows1[2].Output != "call cap reached" {
+		t.Errorf("expected row 2 output 'call cap reached', got %q", rows1[2].Output)
+	}
+
+	// Case 2: explicit Visited with "max-calls": true and MaxCalls: 0 means unlimited
+	plan2, err := ResolvePlan(PipelineOptions{
+		From:     "2026-09-28",
+		To:       "2026-09-30",
+		MaxCalls: 0,
+		Visited: map[string]bool{
+			"from":      true,
+			"to":        true,
+			"max-calls": true,
+		},
+		Now: func() time.Time { return now },
+		Loc: loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan explicit unlimited failed: %v", err)
+	}
+	if plan2.MaxCalls != 0 {
+		t.Errorf("expected plan2.MaxCalls = 0 (unlimited), got %d", plan2.MaxCalls)
+	}
+}
+
+func TestFutureDateErrorMessage(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+
+	_, err := collector.NewDayWindow("2026-10-10", loc, now)
+	if err == nil {
+		t.Fatal("expected error for future date, got nil")
+	}
+	want := "date 2026-10-10 is in the future"
+	if err.Error() != want {
+		t.Errorf("error = %q, want exactly %q", err.Error(), want)
+	}
+}

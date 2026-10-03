@@ -306,7 +306,7 @@ scan:
 			wantSubstr: "must be at least 1",
 		},
 		{
-			name:       "-max-calls -1",
+			name:       "-max-calls -2",
 			args:       []string{"-config", cfgFile, "-max-calls", "-2"},
 			wantSubstr: "must be non-negative",
 		},

@@ -27,11 +27,13 @@ const defaultLLMBaseURL = "https://generativelanguage.googleapis.com/v1beta/open
 // PipelineOptions controls the pipeline execution mode.
 type PipelineOptions struct {
 	// Day mode flags
-	Date     string // exact day (YYYY-MM-DD)
-	From     string // inclusive start day (YYYY-MM-DD)
-	To       string // inclusive end day (YYYY-MM-DD, defaults to yesterday)
-	CatchUp  int    // lookback in calendar days (> 0 overrides scan.catch_up_days)
-	MaxCalls int    // max LLM calls per run (>= 0 overrides llm.max_calls_per_run; 0 = unlimited; -1 means use config)
+	Date    string // exact day (YYYY-MM-DD)
+	From    string // inclusive start day (YYYY-MM-DD)
+	To      string // inclusive end day (YYYY-MM-DD, defaults to yesterday)
+	CatchUp int    // lookback in calendar days (> 0 overrides scan.catch_up_days)
+	// MaxCalls is the max LLM calls per run. When Visited is nil, only MaxCalls > 0
+	// overrides llm.max_calls_per_run; pass Visited with "max-calls": true to set explicit 0 (unlimited).
+	MaxCalls int
 
 	// Window is the git time window (e.g. "24.hours.ago") passed to
 	// git log --since and used as HEAD@{<window>} for diff references.
@@ -97,7 +99,7 @@ func ResolvePlan(opts PipelineOptions, cfg *config.Config, now time.Time, loc *t
 		if opts.CatchUp > 0 {
 			visited["catch-up"] = true
 		}
-		if opts.MaxCalls >= 0 {
+		if opts.MaxCalls > 0 {
 			visited["max-calls"] = true
 		}
 	}
@@ -317,7 +319,7 @@ func Run(cfg *config.Config, opts PipelineOptions) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	_, _, err = RunPlan(ctx, cfg, plan)

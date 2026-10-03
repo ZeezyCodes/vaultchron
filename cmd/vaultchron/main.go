@@ -205,7 +205,7 @@ func runWithArgs(args []string, stdout, stderr io.Writer, nowFunc func() time.Ti
 		return runScan(cfg, plan.Window)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	_, _, err = pipeline.RunPlan(ctx, cfg, plan)
@@ -219,7 +219,7 @@ func runWithArgs(args []string, stdout, stderr io.Writer, nowFunc func() time.Ti
 // runScan executes the non-destructive collector scan: discovers repositories,
 // harvests metadata for each, and prints a formatted terminal table.
 func runScan(cfg *config.Config, window string) int {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	repos, err := collector.DiscoverRepositories(ctx, cfg.Scan.Roots, cfg.Scan.MaxDepth, cfg.Scan.Excludes)

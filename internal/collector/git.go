@@ -301,7 +301,7 @@ func NewDayWindow(date string, loc *time.Location, now time.Time) (DayWindow, er
 	start := time.Date(y, m, d, 0, 0, 0, 0, loc)
 	end := start.AddDate(0, 0, 1)
 	if start.After(now) {
-		return DayWindow{}, fmt.Errorf("date %s is in the future (start %v is after now %v)", date, start, now)
+		return DayWindow{}, fmt.Errorf("date %s is in the future", date)
 	}
 	return DayWindow{
 		Date:    date,
