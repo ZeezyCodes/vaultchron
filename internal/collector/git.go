@@ -272,6 +272,188 @@ func HarvestRepoMetadata(ctx context.Context, repoPath string, sinceWindow strin
 	}, nil
 }
 
+// gitTimeLayout is the standard timestamp format used for git CLI bounds.
+const gitTimeLayout = "2006-01-02 15:04:05 -0700"
+
+// DayWindow defines a single local calendar day collection window.
+type DayWindow struct {
+	Date    string
+	Start   time.Time
+	End     time.Time
+	Partial bool
+}
+
+// NewDayWindow creates a DayWindow for the specified date string (in "2006-01-02" format)
+// in location loc. If loc is nil, time.Local is used.
+// Returns an error if the date format is invalid or if Start is after now (future day).
+func NewDayWindow(date string, loc *time.Location, now time.Time) (DayWindow, error) {
+	if loc == nil {
+		loc = time.Local
+	}
+	t, err := time.ParseInLocation("2006-01-02", date, loc)
+	if err != nil {
+		return DayWindow{}, fmt.Errorf("invalid date %q: %w", date, err)
+	}
+	if t.Format("2006-01-02") != date {
+		return DayWindow{}, fmt.Errorf("invalid date format %q: expected YYYY-MM-DD", date)
+	}
+	y, m, d := t.Date()
+	start := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	end := start.AddDate(0, 0, 1)
+	if start.After(now) {
+		return DayWindow{}, fmt.Errorf("date %s is in the future (start %v is after now %v)", date, start, now)
+	}
+	return DayWindow{
+		Date:    date,
+		Start:   start,
+		End:     end,
+		Partial: now.Before(end),
+	}, nil
+}
+
+// ScanRepositoryDay collects git telemetry and diff content for a single
+// repository within the single calendar day specified by DayWindow.
+// Only the checked-out branch (HEAD) is scanned, as in the legacy path.
+// If the repository has zero commits on that day, returns (nil, nil) to signal
+// the caller to skip it.
+func ScanRepositoryDay(ctx context.Context, repoPath string, w DayWindow) (*RepoMetadata, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	sinceStr := w.Start.Format(gitTimeLayout)
+	untilStr := w.End.Add(-1 * time.Second).Format(gitTimeLayout)
+
+	commits, head, err := collectDayCommitsAndHead(ctx, repoPath, sinceStr, untilStr)
+	if err != nil {
+		return nil, fmt.Errorf("collecting day commits for %s: %w", repoPath, err)
+	}
+	if len(commits) == 0 {
+		return nil, nil // inactive repo on this day, skip
+	}
+
+	projectName := repoToProjectName(repoPath)
+	branch, err := getActiveBranch(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("getting branch for %s: %w", repoPath, err)
+	}
+
+	startMinus1 := w.Start.Add(-1 * time.Second).Format(gitTimeLayout)
+	base, err := resolveDayBaseRef(ctx, repoPath, startMinus1)
+	if err != nil {
+		return nil, fmt.Errorf("resolving day base commit for %s: %w", repoPath, err)
+	}
+
+	diffRange := fmt.Sprintf("%s..%s", base, head)
+
+	shortstat, err := getDiffShortstat(ctx, repoPath, diffRange)
+	if err != nil {
+		return nil, fmt.Errorf("getting shortstat for %s: %w", repoPath, err)
+	}
+
+	topPackages, err := getTopModifiedPackages(ctx, repoPath, diffRange)
+	if err != nil {
+		return nil, fmt.Errorf("getting top packages for %s: %w", repoPath, err)
+	}
+
+	unifiedDiff, err := getUnifiedDiff(ctx, repoPath, diffRange)
+	if err != nil {
+		return nil, fmt.Errorf("getting unified diff for %s: %w", repoPath, err)
+	}
+
+	return &RepoMetadata{
+		Name:         projectName,
+		Path:         repoPath,
+		Branch:       branch,
+		Commits:      commits,
+		CommitsCount: len(commits),
+		Shortstat:    shortstat,
+		TopPackages:  topPackages,
+		UnifiedDiff:  unifiedDiff,
+	}, nil
+}
+
+// collectDayCommitsAndHead queries git log within the specified day bounds on HEAD,
+// returning oneline commit messages and the SHA of the newest commit.
+// Only the checked-out branch (HEAD) is scanned, as in the legacy path.
+func collectDayCommitsAndHead(ctx context.Context, repoPath, sinceStr, untilStr string) ([]string, string, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// Only the checked-out branch (HEAD) is scanned, matching legacy behavior.
+	out, err := exec.CommandContext(cmdCtx, "git", "-C", repoPath, "log",
+		fmt.Sprintf("--since=%s", sinceStr),
+		fmt.Sprintf("--until=%s", untilStr),
+		"--oneline",
+		"HEAD",
+	).Output()
+	if err != nil {
+		return nil, "", err
+	}
+	commits := parseCommitLines(string(out))
+	if len(commits) == 0 {
+		return nil, "", nil
+	}
+
+	cmdCtxHead, cancelHead := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelHead()
+	headOut, err := exec.CommandContext(cmdCtxHead, "git", "-C", repoPath, "log",
+		"-1",
+		fmt.Sprintf("--since=%s", sinceStr),
+		fmt.Sprintf("--until=%s", untilStr),
+		"--format=%H",
+		"HEAD",
+	).Output()
+	if err != nil {
+		return nil, "", err
+	}
+	headLines := strings.Split(strings.TrimSpace(string(headOut)), "\n")
+	head := strings.TrimSpace(headLines[0])
+	if head == "" {
+		return nil, "", fmt.Errorf("no head commit found despite non-empty commits")
+	}
+
+	return commits, head, nil
+}
+
+// resolveDayBaseRef finds the commit SHA before the day window to diff against.
+// If no commit exists before the day window, it falls back to the empty tree SHA
+// obtained from git hash-object -t tree --stdin with empty stdin.
+func resolveDayBaseRef(ctx context.Context, repoPath, untilStr string) (string, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cmdCtx, "git", "-C", repoPath, "rev-list",
+		"-1",
+		fmt.Sprintf("--until=%s", untilStr),
+		"HEAD",
+	).Output()
+	if err != nil {
+		return "", fmt.Errorf("resolving day base commit for %s: %w", repoPath, err)
+	}
+	sha := strings.TrimSpace(string(out))
+	if sha == "" {
+		return getEmptyTreeSHA(ctx, repoPath)
+	}
+	return sha, nil
+}
+
+// getEmptyTreeSHA returns the Git empty tree hash by executing git hash-object -t tree --stdin with empty stdin.
+func getEmptyTreeSHA(ctx context.Context, repoPath string) (string, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cmdCtx, "git", "-C", repoPath, "hash-object", "-t", "tree", "--stdin")
+	cmd.Stdin = strings.NewReader("")
+	out, err := cmd.Output()
+	if err != nil {
+		return emptyTreeSHA, nil
+	}
+	sha := strings.TrimSpace(string(out))
+	if sha == "" {
+		return emptyTreeSHA, nil
+	}
+	return sha, nil
+}
+
 // collectCommitsInWindow queries git log with --since to get oneline commit
 // messages within the time window.
 func collectCommitsInWindow(ctx context.Context, repoPath, sinceWindow string) ([]string, error) {
