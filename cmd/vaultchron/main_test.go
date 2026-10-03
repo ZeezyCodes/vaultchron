@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -367,5 +368,173 @@ scan:
 		if code != 0 {
 			t.Errorf("args %v failed with code %d; stderr: %s", args, code, stderr.String())
 		}
+	}
+}
+
+func setupTestGitRepo(t *testing.T) string {
+	t.Helper()
+	repoDir := filepath.Join(t.TempDir(), "testrepo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("creating repo dir: %v", err)
+	}
+	emptyConfig := filepath.Join(t.TempDir(), ".emptyconfig")
+	if err := os.WriteFile(emptyConfig, []byte(""), 0o600); err != nil {
+		t.Fatalf("creating empty git config: %v", err)
+	}
+
+	runGit := func(envDates []string, args ...string) {
+		t.Helper()
+		cmdArgs := append([]string{"-C", repoDir}, args...)
+		cmd := exec.Command("git", cmdArgs...)
+		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_CONFIG_GLOBAL="+emptyConfig,
+			"GIT_AUTHOR_NAME=Test User",
+			"GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=Test User",
+			"GIT_COMMITTER_EMAIL=test@example.com",
+		)
+		if len(envDates) > 0 {
+			cmd.Env = append(cmd.Env, envDates...)
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s failed: %v: %s", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	runGit(nil, "init", "-b", "main")
+
+	days := []string{"2026-09-29", "2026-09-30"}
+	for _, d := range days {
+		fPath := filepath.Join(repoDir, fmt.Sprintf("file_%s.txt", d))
+		if err := os.WriteFile(fPath, []byte("content on "+d+"\n"), 0o644); err != nil {
+			t.Fatalf("writing file: %v", err)
+		}
+		runGit(nil, "add", filepath.Base(fPath))
+		runGit([]string{
+			fmt.Sprintf("GIT_AUTHOR_DATE=%sT12:00:00-05:00", d),
+			fmt.Sprintf("GIT_COMMITTER_DATE=%sT12:00:00-05:00", d),
+		}, "commit", "-m", "Commit on "+d)
+	}
+
+	return repoDir
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+
+	outChan := make(chan string)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		outChan <- buf.String()
+	}()
+
+	fn()
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+	out := <-outChan
+	_ = r.Close()
+	return out
+}
+
+func TestRunWithArgs_DayMode(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	fixedNow := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	nowFunc := func() time.Time { return fixedNow }
+
+	repoDir := setupTestGitRepo(t)
+	scanRoot := filepath.Dir(repoDir)
+	vaultDir := filepath.Join(t.TempDir(), "vault")
+	if err := os.MkdirAll(vaultDir, 0o755); err != nil {
+		t.Fatalf("creating vault dir: %v", err)
+	}
+
+	cfgDir := t.TempDir()
+	cfgFile := filepath.Join(cfgDir, "config.yaml")
+	cfgContent := fmt.Sprintf(`
+vault:
+  path: %q
+scan:
+  roots: [%q]
+`, filepath.ToSlash(vaultDir), filepath.ToSlash(scanRoot))
+	if err := os.WriteFile(cfgFile, []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("writing test config: %v", err)
+	}
+
+	assertNoVaultWrites := func(label string) {
+		t.Helper()
+		entries, err := os.ReadDir(vaultDir)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("%s: reading vault dir: %v", label, err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("%s: expected vault dir to be empty, found %d entries", label, len(entries))
+		}
+	}
+
+	// 1. -dry-run -from 2026-09-29 -to 2026-09-30 prints two WOULD WRITE rows and writes nothing under vault dir
+	{
+		var stdout, stderr bytes.Buffer
+		args := []string{"-config", cfgFile, "-dry-run", "-from", "2026-09-29", "-to", "2026-09-30"}
+		var code int
+		out := captureStdout(t, func() {
+			code = runWithArgs(args, &stdout, &stderr, nowFunc, loc)
+		})
+		if code != 0 {
+			t.Fatalf("-dry-run -from -to failed with exit code %d, stderr: %s", code, stderr.String())
+		}
+		if strings.Count(out, "WOULD WRITE") != 2 {
+			t.Errorf("expected 2 WOULD WRITE rows, got:\n%s", out)
+		}
+		assertNoVaultWrites("-dry-run -from -to")
+	}
+
+	// 2. -scan -from 2026-09-29 -to 2026-09-30 prints a Repository/Date/Commits table with both days and makes no vault writes
+	{
+		var stdout, stderr bytes.Buffer
+		args := []string{"-config", cfgFile, "-scan", "-from", "2026-09-29", "-to", "2026-09-30"}
+		var code int
+		out := captureStdout(t, func() {
+			code = runWithArgs(args, &stdout, &stderr, nowFunc, loc)
+		})
+		if code != 0 {
+			t.Fatalf("-scan -from -to failed with exit code %d, stderr: %s", code, stderr.String())
+		}
+		if !strings.Contains(out, "Repository") || !strings.Contains(out, "Date") || !strings.Contains(out, "Commits") {
+			t.Errorf("expected table header Repository/Date/Commits, got:\n%s", out)
+		}
+		if !strings.Contains(out, "2026-09-29") || !strings.Contains(out, "2026-09-30") {
+			t.Errorf("expected table to contain both days 2026-09-29 and 2026-09-30, got:\n%s", out)
+		}
+		assertNoVaultWrites("-scan -from -to")
+	}
+
+	// 3. -dry-run -date <a day with no commits> prints 0 would be written and 1 repo-days had no commits
+	{
+		var stdout, stderr bytes.Buffer
+		args := []string{"-config", cfgFile, "-dry-run", "-date", "2026-09-28"}
+		var code int
+		out := captureStdout(t, func() {
+			code = runWithArgs(args, &stdout, &stderr, nowFunc, loc)
+		})
+		if code != 0 {
+			t.Fatalf("-dry-run -date (no commits) failed with exit code %d, stderr: %s", code, stderr.String())
+		}
+		if !strings.Contains(out, "0 would be written") {
+			t.Errorf("expected output to contain '0 would be written', got:\n%s", out)
+		}
+		if !strings.Contains(out, "1 repo-days had no commits") {
+			t.Errorf("expected output to contain '1 repo-days had no commits', got:\n%s", out)
+		}
+		assertNoVaultWrites("-dry-run -date (no commits)")
 	}
 }
