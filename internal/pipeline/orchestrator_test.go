@@ -773,7 +773,8 @@ func TestPipeline_ForceAndFromTo(t *testing.T) {
 // TestPipeline_LegacyWindow asserts that legacy -window mode works and skips existing notes unless -force.
 func TestPipeline_LegacyWindow(t *testing.T) {
 	loc := time.FixedZone("UTC-5", -5*3600)
-	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	now := time.Now().In(loc)
+	commitDate := now.Add(-1 * time.Hour).Format(time.RFC3339)
 	repoDir, runGit := setupTestGitRepo(t)
 
 	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
@@ -781,8 +782,8 @@ func TestPipeline_LegacyWindow(t *testing.T) {
 	}
 	runGit(nil, "add", "main.go")
 	runGit([]string{
-		"GIT_AUTHOR_DATE=2026-10-03T10:00:00-05:00",
-		"GIT_COMMITTER_DATE=2026-10-03T10:00:00-05:00",
+		"GIT_AUTHOR_DATE=" + commitDate,
+		"GIT_COMMITTER_DATE=" + commitDate,
 	}, "commit", "-m", "Commit on 2026-10-03")
 
 	ts, reqs := newMockLLMServer(t)
