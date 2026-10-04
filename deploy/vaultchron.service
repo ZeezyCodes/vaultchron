@@ -1,6 +1,10 @@
 # Environment file format is KEY=value lines without export or quotes problems.
 # If installed to a custom directory, override ExecStart:
 #   systemctl --user edit vaultchron.service
+# The empty ExecStart= line resets the original command:
+#   [Service]
+#   ExecStart=
+#   ExecStart=/path/to/vaultchron
 # View service execution logs via:
 #   journalctl --user -u vaultchron
 
