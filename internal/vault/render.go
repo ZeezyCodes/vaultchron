@@ -33,13 +33,19 @@ type DevlogData struct {
 
 // RenderDevlog executes the embedded devlog template and returns the formatted
 // markdown string. Implements the v3 callout taxonomy (telemetry note,
-// abstract, info, bug, warning, check sections).
+// abstract, info, bug, warning, check sections). A CRLF checkout of the
+// template is normalized to LF.
 func RenderDevlog(data DevlogData) (string, error) {
 	tmplText, err := templatesFS.ReadFile("templates/devlog.md.tmpl")
 	if err != nil {
 		return "", fmt.Errorf("reading embedded template: %w", err)
 	}
-	tmpl, err := template.New("devlog").Parse(string(tmplText))
+	return renderTemplate(tmplText, data)
+}
+
+func renderTemplate(tmplText []byte, data DevlogData) (string, error) {
+	normalized := strings.ReplaceAll(string(tmplText), "\r\n", "\n")
+	tmpl, err := template.New("devlog").Parse(normalized)
 	if err != nil {
 		return "", fmt.Errorf("parsing template: %w", err)
 	}

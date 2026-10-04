@@ -174,3 +174,31 @@ func TestDevlogExists_CRLF(t *testing.T) {
 		t.Errorf("expected partial = false, got true")
 	}
 }
+
+func TestRenderTemplate_CRLFTemplateRendersLF(t *testing.T) {
+	raw, err := templatesFS.ReadFile("templates/devlog.md.tmpl")
+	if err != nil {
+		t.Fatalf("reading embedded template: %v", err)
+	}
+
+	lf := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+
+	for _, partial := range []bool{false, true} {
+		data := sampleDevlogData(partial)
+		renderedLF, err := renderTemplate([]byte(lf), data)
+		if err != nil {
+			t.Fatalf("renderTemplate with LF template (partial=%v) failed: %v", partial, err)
+		}
+		renderedCRLF, err := renderTemplate([]byte(crlf), data)
+		if err != nil {
+			t.Fatalf("renderTemplate with CRLF template (partial=%v) failed: %v", partial, err)
+		}
+		if renderedCRLF != renderedLF {
+			t.Errorf("rendered output with CRLF template differs from LF template (partial=%v)", partial)
+		}
+		if strings.Contains(renderedCRLF, "\r") {
+			t.Errorf("rendered output with CRLF template contains carriage return (partial=%v)", partial)
+		}
+	}
+}
