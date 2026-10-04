@@ -336,7 +336,7 @@ VaultChron defaults to generating structured devlogs on a local calendar-day bou
 When pointing VaultChron to an existing Obsidian vault:
 - **Target vault location**: Set `vault.path` in your configuration to the root directory of your existing Obsidian vault.
 - **Contained write scope**: Devlog notes are written only under `<vault>/Projects/<repo>/Devlog/` (e.g. `<vault>/Projects/my-project/Devlog/2026-10-02.md`). VaultChron will not touch other directories or notes in your vault.
-- **In-place index maintenance**: The root index file (`00-Dev-Index.md` by default) is updated in place under a `## Recent Dev Logs` or `## Recent Activity` heading, prepending new summary rows without disturbing your existing notes or surrounding content.
+- **In-place index maintenance**: The root index file (`00-Dev-Index.md` by default) is updated in place under a `## Recent Dev Logs` or `## Recent Activity` heading, inserting entries in date order (newest first) and replacing an existing entry for the same project and day without disturbing your existing notes or surrounding content.
 - **Preservation of existing notes**: Notes already written for complete days are skipped automatically, preventing unintended overwrites.
 - **Index error safeguard**: If the index file exists but cannot be updated (see Index Handling above), VaultChron aborts the run before writing note files to disk.
 - **Backup recommendation**: Always back up or commit your Obsidian vault to version control before running VaultChron for the first time against live documentation.
@@ -413,7 +413,12 @@ Schedule VaultChron as a macOS launchd user agent running daily at 07:00:
 
 ### Windows
 
-For Windows task scheduling using `deploy/windows/register-task.ps1` and Scheduled Tasks, see the [Scheduling with Scheduled Tasks](#scheduling-with-scheduled-tasks) section under Windows Setup & Usage above.
+The Scheduled Task is registered with `deploy/windows/register-task.ps1`; see [Windows Setup & Usage](#windows-setup--usage) for details:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\windows\register-task.ps1 -Unregister
+```
 
 ## How It Works
 
