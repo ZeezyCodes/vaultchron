@@ -111,21 +111,6 @@ func ExpandPath(p string) string {
 	return expanded
 }
 
-// ResolveConfigPath returns explicit if non-empty; otherwise, it checks if "config.yaml" exists,
-// then "config.example.yaml", falling back to "config.yaml" if neither exists.
-func ResolveConfigPath(explicit string) string {
-	if explicit != "" {
-		return explicit
-	}
-	if _, err := os.Stat("config.yaml"); err == nil {
-		return "config.yaml"
-	}
-	if _, err := os.Stat("config.example.yaml"); err == nil {
-		return "config.example.yaml"
-	}
-	return "config.yaml"
-}
-
 // Load reads, parses, applies defaults, and validates a YAML config file into a Config struct.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)

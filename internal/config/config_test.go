@@ -332,48 +332,6 @@ scan:
 	}
 }
 
-// TestResolveConfigPath verifies resolution order: explicit > config.yaml > config.example.yaml.
-func TestResolveConfigPath(t *testing.T) {
-	// Explicit path should always be returned as-is
-	if got := ResolveConfigPath("/custom/path.yaml"); got != "/custom/path.yaml" {
-		t.Errorf("expected /custom/path.yaml, got %q", got)
-	}
-
-	// Change working directory to a clean temp dir to test fallbacks
-	origWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get current wd: %v", err)
-	}
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to chdir to tempDir: %v", err)
-	}
-	defer func() {
-		_ = os.Chdir(origWd)
-	}()
-
-	// Neither file exists: defaults to "config.yaml"
-	if got := ResolveConfigPath(""); got != "config.yaml" {
-		t.Errorf("expected config.yaml when neither exists, got %q", got)
-	}
-
-	// Only config.example.yaml exists
-	if err := os.WriteFile("config.example.yaml", []byte(""), 0o644); err != nil {
-		t.Fatalf("failed to write config.example.yaml: %v", err)
-	}
-	if got := ResolveConfigPath(""); got != "config.example.yaml" {
-		t.Errorf("expected config.example.yaml, got %q", got)
-	}
-
-	// Both config.yaml and config.example.yaml exist: prefers config.yaml
-	if err := os.WriteFile("config.yaml", []byte(""), 0o644); err != nil {
-		t.Fatalf("failed to write config.yaml: %v", err)
-	}
-	if got := ResolveConfigPath(""); got != "config.yaml" {
-		t.Errorf("expected config.yaml over config.example.yaml, got %q", got)
-	}
-}
-
 // TestLoad_CatchUpDays verifies absent, explicit 0, negative, and positive values.
 func TestLoad_CatchUpDays(t *testing.T) {
 	tests := []struct {
