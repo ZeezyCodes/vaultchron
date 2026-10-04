@@ -642,12 +642,7 @@ func TestConfigResolutionCLI(t *testing.T) {
 		vaultDir := filepath.Join(workDir, "vault")
 		_ = os.MkdirAll(vaultDir, 0o755)
 
-		var userCfgPath string
-		if runtime.GOOS == "windows" {
-			userCfgPath = filepath.Join(tempHome, "vaultchron", "config.yaml")
-		} else {
-			userCfgPath = filepath.Join(tempHome, "vaultchron", "config.yaml")
-		}
+		userCfgPath := filepath.Join(tempHome, "vaultchron", "config.yaml")
 		writeMinimalConfig(t, userCfgPath, vaultDir, repoDir)
 
 		var stdout, stderr bytes.Buffer

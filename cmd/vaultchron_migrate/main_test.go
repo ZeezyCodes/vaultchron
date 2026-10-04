@@ -60,10 +60,8 @@ func TestResolveVaultPath_CallSites(t *testing.T) {
 	t.Setenv("VAULTCHRON_CONFIG", "")
 
 	t.Run("real run with no config returns error and runMigrate exits 1", func(t *testing.T) {
-		origWd, _ := os.Getwd()
 		tDir := t.TempDir()
-		_ = os.Chdir(tDir)
-		defer func() { _ = os.Chdir(origWd) }()
+		t.Chdir(tDir)
 
 		var out, errOut bytes.Buffer
 		code := runMigrate("", "", "", false, &out, &errOut)
@@ -76,10 +74,8 @@ func TestResolveVaultPath_CallSites(t *testing.T) {
 	})
 
 	t.Run("dry-run with only example config succeeds", func(t *testing.T) {
-		origWd, _ := os.Getwd()
 		tDir := t.TempDir()
-		_ = os.Chdir(tDir)
-		defer func() { _ = os.Chdir(origWd) }()
+		t.Chdir(tDir)
 
 		vaultDir := filepath.Join(tDir, "test-vault")
 		_ = os.MkdirAll(vaultDir, 0o755)
@@ -100,10 +96,8 @@ func TestResolveVaultPath_CallSites(t *testing.T) {
 	})
 
 	t.Run("real run with only example config fails", func(t *testing.T) {
-		origWd, _ := os.Getwd()
 		tDir := t.TempDir()
-		_ = os.Chdir(tDir)
-		defer func() { _ = os.Chdir(origWd) }()
+		t.Chdir(tDir)
 
 		vaultDir := filepath.Join(tDir, "test-vault")
 		_ = os.MkdirAll(vaultDir, 0o755)
