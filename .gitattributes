@@ -1,0 +1,5 @@
+# Keep these files LF on every platform: the template is embedded into the
+# binary at build time, and shell scripts must not be checked out with CRLF.
+internal/vault/templates/* text eol=lf
+*.go text eol=lf
+*.sh text eol=lf
