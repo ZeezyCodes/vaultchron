@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1115,13 +1116,32 @@ func TestPipeline_IndexMissing(t *testing.T) {
 
 	warnLine := fmt.Sprintf("[WARN] index file %s not found; notes are written but the index is not updated",
 		filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile))
-	if strings.Count(captured, warnLine) != 1 {
-		t.Errorf("expected warning printed exactly once, got %d times in stderr:\n%s",
-			strings.Count(captured, warnLine), captured)
+	if strings.Contains(captured, warnLine) {
+		t.Errorf("expected no warning about missing index, got in stderr:\n%s", captured)
+	}
+
+	// Verify index was created and contains rows
+	indexPath := filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile)
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("expected bootstrapped index at %s: %v", indexPath, err)
+	}
+	indexContent := string(indexData)
+	projectName := collector.ProjectName(repoDir)
+	for _, d := range days {
+		expectedRow := fmt.Sprintf("[[Projects/%s/Devlog/%s|%s]]", projectName, d, d)
+		if !strings.Contains(indexContent, expectedRow) {
+			t.Errorf("expected index to contain entry %s, got:\n%s", expectedRow, indexContent)
+		}
+	}
+
+	// Verify overview stub was created
+	overviewPath := filepath.Join(cfg.Vault.Path, "Projects", projectName, "Overview.md")
+	if _, err := os.Stat(overviewPath); err != nil {
+		t.Errorf("expected overview stub to exist at %s: %v", overviewPath, err)
 	}
 
 	// Verify notes written on disk
-	projectName := collector.ProjectName(repoDir)
 	for _, d := range days {
 		exists, _, _ := vault.DevlogExists(cfg.Vault.Path, projectName, d)
 		if !exists {
@@ -1507,5 +1527,264 @@ func TestFutureDateErrorMessage(t *testing.T) {
 	want := "date 2026-10-10 is in the future"
 	if err.Error() != want {
 		t.Errorf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+func TestPipeline_OverviewStub_NotOverwritten(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	fPath := filepath.Join(repoDir, "file_2026-09-30.txt")
+	if err := os.WriteFile(fPath, []byte("content\n"), 0o644); err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+	runGit(nil, "add", filepath.Base(fPath))
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-09-30T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-09-30T10:00:00-05:00",
+	}, "commit", "-m", "Commit on 2026-09-30")
+
+	ts, _ := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	plan, err := ResolvePlan(PipelineOptions{
+		Date:    "2026-09-30",
+		Visited: map[string]bool{"date": true},
+		Now:     func() time.Time { return now },
+		Loc:     loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan: %v", err)
+	}
+
+	if _, _, err := RunPlan(context.Background(), cfg, plan); err != nil {
+		t.Fatalf("RunPlan failed: %v", err)
+	}
+
+	projectName := collector.ProjectName(repoDir)
+	overviewPath := filepath.Join(cfg.Vault.Path, "Projects", projectName, "Overview.md")
+	if _, err := os.Stat(overviewPath); err != nil {
+		t.Fatalf("expected overview stub at %s: %v", overviewPath, err)
+	}
+
+	// Modify content of the overview stub
+	customContent := "# Custom Project Overview\n\nPreserved user documentation\n"
+	if err := os.WriteFile(overviewPath, []byte(customContent), 0o644); err != nil {
+		t.Fatalf("modifying overview stub: %v", err)
+	}
+
+	// Re-run pipeline with Force = true
+	planForce, err := ResolvePlan(PipelineOptions{
+		Date:    "2026-09-30",
+		Force:   true,
+		Visited: map[string]bool{"date": true, "force": true},
+		Now:     func() time.Time { return now },
+		Loc:     loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan force: %v", err)
+	}
+
+	if _, _, err := RunPlan(context.Background(), cfg, planForce); err != nil {
+		t.Fatalf("RunPlan with force failed: %v", err)
+	}
+
+	afterData, err := os.ReadFile(overviewPath)
+	if err != nil {
+		t.Fatalf("reading overview stub after force run: %v", err)
+	}
+	if string(afterData) != customContent {
+		t.Errorf("overview stub was overwritten on force run; expected %q, got %q", customContent, string(afterData))
+	}
+}
+
+func TestPipeline_ExistingIndex_NotTouched(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	fPath := filepath.Join(repoDir, "file_2026-09-30.txt")
+	if err := os.WriteFile(fPath, []byte("content\n"), 0o644); err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+	runGit(nil, "add", filepath.Base(fPath))
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-09-30T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-09-30T10:00:00-05:00",
+	}, "commit", "-m", "Commit on 2026-09-30")
+
+	ts, _ := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	indexPath := filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile)
+
+	customIndex := "# Custom Vault Title\n\nCustom preamble note that must stay.\n\n## Recent Dev Logs\n\n| Date | Notes |\n|---|---|\n"
+	if err := os.WriteFile(indexPath, []byte(customIndex), 0o644); err != nil {
+		t.Fatalf("writing custom index: %v", err)
+	}
+
+	plan, err := ResolvePlan(PipelineOptions{
+		Date:    "2026-09-30",
+		Visited: map[string]bool{"date": true},
+		Now:     func() time.Time { return now },
+		Loc:     loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan: %v", err)
+	}
+
+	if _, _, err := RunPlan(context.Background(), cfg, plan); err != nil {
+		t.Fatalf("RunPlan failed: %v", err)
+	}
+
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("reading index: %v", err)
+	}
+	indexContent := string(indexData)
+
+	if !strings.Contains(indexContent, "# Custom Vault Title") {
+		t.Errorf("custom index title was lost:\n%s", indexContent)
+	}
+	if !strings.Contains(indexContent, "Custom preamble note that must stay.") {
+		t.Errorf("custom preamble was lost:\n%s", indexContent)
+	}
+	projectName := collector.ProjectName(repoDir)
+	expectedLink := fmt.Sprintf("[[Projects/%s/Devlog/2026-09-30|2026-09-30]]", projectName)
+	if !strings.Contains(indexContent, expectedLink) {
+		t.Errorf("expected devlog entry %s in index:\n%s", expectedLink, indexContent)
+	}
+}
+
+func TestPipeline_DryRun_CreatesNoIndexAndNoStub(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	fPath := filepath.Join(repoDir, "file_2026-09-30.txt")
+	if err := os.WriteFile(fPath, []byte("content\n"), 0o644); err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+	runGit(nil, "add", filepath.Base(fPath))
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-09-30T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-09-30T10:00:00-05:00",
+	}, "commit", "-m", "Commit on 2026-09-30")
+
+	ts, _ := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	plan, err := ResolvePlan(PipelineOptions{
+		Date:    "2026-09-30",
+		DryRun:  true,
+		Visited: map[string]bool{"date": true},
+		Now:     func() time.Time { return now },
+		Loc:     loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan: %v", err)
+	}
+
+	if _, _, err := RunPlan(context.Background(), cfg, plan); err != nil {
+		t.Fatalf("RunPlan dry-run failed: %v", err)
+	}
+
+	indexPath := filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile)
+	if _, err := os.Stat(indexPath); !errors.Is(err, os.ErrNotExist) && !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected index file to NOT exist on dry-run, got err=%v", err)
+	}
+
+	projectName := collector.ProjectName(repoDir)
+	overviewPath := filepath.Join(cfg.Vault.Path, "Projects", projectName, "Overview.md")
+	if _, err := os.Stat(overviewPath); !errors.Is(err, os.ErrNotExist) && !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected overview stub to NOT exist on dry-run, got err=%v", err)
+	}
+}
+
+func TestPipeline_NoNotes_CreatesNoIndex(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, _ := setupTestGitRepo(t) // empty repo, 0 commits
+
+	ts, _ := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	plan, err := ResolvePlan(PipelineOptions{
+		Date:    "2026-09-30",
+		Visited: map[string]bool{"date": true},
+		Now:     func() time.Time { return now },
+		Loc:     loc,
+	}, cfg, now, loc)
+	if err != nil {
+		t.Fatalf("ResolvePlan: %v", err)
+	}
+
+	if _, _, err := RunPlan(context.Background(), cfg, plan); err != nil {
+		t.Fatalf("RunPlan failed: %v", err)
+	}
+
+	indexPath := filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile)
+	if _, err := os.Stat(indexPath); !errors.Is(err, os.ErrNotExist) && !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected index file to NOT exist when no notes are written, got err=%v", err)
+	}
+}
+
+func TestPipeline_LegacyWindow_IndexBootstrap(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	commitDate := now.Add(-1 * time.Hour).Format(time.RFC3339)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("writing main.go: %v", err)
+	}
+	runGit(nil, "add", "main.go")
+	runGit([]string{
+		"GIT_AUTHOR_DATE=" + commitDate,
+		"GIT_COMMITTER_DATE=" + commitDate,
+	}, "commit", "-m", "Commit on 2026-10-03")
+
+	ts, _ := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+
+	opts := PipelineOptions{
+		Window:   now.Add(-2 * time.Hour).Format(time.RFC3339),
+		IsWindow: true,
+		Now:      func() time.Time { return now },
+		Loc:      loc,
+	}
+
+	captured := captureStderr(t, func() {
+		if err := Run(cfg, opts); err != nil {
+			t.Fatalf("legacy window run failed: %v", err)
+		}
+	})
+
+	if strings.Contains(captured, "[ERROR]") && strings.Contains(captured, "index update failed") {
+		t.Errorf("expected no index update error in legacy run, got in stderr:\n%s", captured)
+	}
+
+	indexPath := filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile)
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("expected bootstrapped index in legacy run at %s: %v", indexPath, err)
+	}
+	projectName := collector.ProjectName(repoDir)
+	today := now.Format("2006-01-02")
+	expectedLink := fmt.Sprintf("[[Projects/%s/Devlog/%s|%s]]", projectName, today, today)
+	if !strings.Contains(string(indexData), expectedLink) {
+		t.Errorf("expected index to contain %s, got:\n%s", expectedLink, string(indexData))
+	}
+
+	overviewPath := filepath.Join(cfg.Vault.Path, "Projects", projectName, "Overview.md")
+	if _, err := os.Stat(overviewPath); err != nil {
+		t.Errorf("expected overview stub in legacy run at %s: %v", overviewPath, err)
 	}
 }

@@ -12,7 +12,7 @@ import (
 	"text/template"
 )
 
-//go:embed templates/devlog.md.tmpl
+//go:embed templates/devlog.md.tmpl templates/overview.md.tmpl
 var templatesFS embed.FS
 
 // DevlogData is the data passed to the devlog.md.tmpl template.
@@ -126,4 +126,59 @@ func WriteDevlog(vaultPath, projectName, date string, data DevlogData) (string, 
 		return "", fmt.Errorf("writing devlog file: %w", err)
 	}
 	return targetPath, nil
+}
+
+// OverviewData is the data passed to the overview.md.tmpl template.
+type OverviewData struct {
+	ProjectName string // e.g. "AcmeWidgets.com"
+	Slug        string // e.g. "acmewidgets"
+}
+
+// RenderOverview executes the embedded overview template and returns the formatted
+// markdown string. A CRLF checkout of the template is normalized to LF.
+func RenderOverview(data OverviewData) (string, error) {
+	tmplText, err := templatesFS.ReadFile("templates/overview.md.tmpl")
+	if err != nil {
+		return "", fmt.Errorf("reading embedded template: %w", err)
+	}
+	normalized := strings.ReplaceAll(string(tmplText), "\r\n", "\n")
+	tmpl, err := template.New("overview").Parse(normalized)
+	if err != nil {
+		return "", fmt.Errorf("parsing template: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("executing template: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// overviewPath returns the filesystem path to an overview note for the given vault and project.
+func overviewPath(vaultPath, projectName string) string {
+	return filepath.Join(vaultPath, "Projects", projectName, "Overview.md")
+}
+
+// EnsureOverviewStub creates <vault>/Projects/<projectName>/Overview.md if it does
+// not already exist. It never overwrites an existing file.
+func EnsureOverviewStub(vaultPath, projectName, slug string) error {
+	targetPath := overviewPath(vaultPath, projectName)
+	_, err := os.Stat(targetPath)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("checking overview at %s: %w", targetPath, err)
+	}
+
+	rendered, err := RenderOverview(OverviewData{
+		ProjectName: projectName,
+		Slug:        slug,
+	})
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(targetPath, []byte(rendered), 0o644); err != nil {
+		return fmt.Errorf("writing overview file: %w", err)
+	}
+	return nil
 }

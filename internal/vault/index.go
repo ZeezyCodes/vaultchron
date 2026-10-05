@@ -1,7 +1,9 @@
 package vault
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,6 +11,25 @@ import (
 
 	"github.com/ZeezyCodes/vaultchron/internal/config"
 )
+
+const defaultIndexContent = "# Dev Index\n\n## Recent Dev Logs\n\n| Date | Notes |\n|---|---|\n"
+
+// BootstrapIndex creates the root dev index file with minimal content if it does not already exist.
+// If the index file already exists, it is never modified or overwritten.
+func BootstrapIndex(vaultCfg config.VaultConfig) error {
+	indexPath := filepath.Join(vaultCfg.Path, vaultCfg.IndexFile)
+	_, err := os.Stat(indexPath)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("checking index file %s: %w", indexPath, err)
+	}
+	if err := writeFileAtomic(indexPath, []byte(defaultIndexContent), 0o644); err != nil {
+		return fmt.Errorf("writing index file %s: %w", indexPath, err)
+	}
+	return nil
+}
 
 // firstBoldHeader extracts the first bold inline header (**text**) from the
 // LLM-generated content. This serves as the brief abstract for index entries.

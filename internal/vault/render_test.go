@@ -202,3 +202,83 @@ func TestRenderTemplate_CRLFTemplateRendersLF(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderOverview(t *testing.T) {
+	data := OverviewData{
+		ProjectName: "AcmeWidgets.com",
+		Slug:        "acmewidgets",
+	}
+
+	rendered, err := RenderOverview(data)
+	if err != nil {
+		t.Fatalf("RenderOverview failed: %v", err)
+	}
+
+	// Verify frontmatter
+	if !strings.Contains(rendered, "project: AcmeWidgets.com") {
+		t.Errorf("expected frontmatter with project: AcmeWidgets.com, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "type/overview") {
+		t.Errorf("expected tag type/overview, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "project/acmewidgets") {
+		t.Errorf("expected tag project/acmewidgets, got:\n%s", rendered)
+	}
+
+	// Verify breadcrumb
+	if !strings.Contains(rendered, "[[00-Dev-Index|🏠 Index]] / AcmeWidgets.com") {
+		t.Errorf("expected breadcrumb, got:\n%s", rendered)
+	}
+
+	// Verify heading
+	if !strings.Contains(rendered, "# AcmeWidgets.com") {
+		t.Errorf("expected heading # AcmeWidgets.com, got:\n%s", rendered)
+	}
+
+	// Verify callout
+	if !strings.Contains(rendered, "> [!note]") {
+		t.Errorf("expected [!note] callout, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "placeholder created by VaultChron") {
+		t.Errorf("expected placeholder text in callout, got:\n%s", rendered)
+	}
+}
+
+func TestEnsureOverviewStub(t *testing.T) {
+	vaultPath := t.TempDir()
+	projName := "AcmeWidgets.com"
+	slug := "acmewidgets"
+
+	// 1. Initial creation
+	if err := EnsureOverviewStub(vaultPath, projName, slug); err != nil {
+		t.Fatalf("EnsureOverviewStub failed: %v", err)
+	}
+
+	stubPath := filepath.Join(vaultPath, "Projects", projName, "Overview.md")
+	content, err := os.ReadFile(stubPath)
+	if err != nil {
+		t.Fatalf("reading overview stub: %v", err)
+	}
+	if !strings.Contains(string(content), "type/overview") {
+		t.Errorf("expected overview content, got:\n%s", string(content))
+	}
+
+	// 2. Modify content to custom user content
+	customContent := "# Custom Overview\n\nUser written documentation\n"
+	if err := os.WriteFile(stubPath, []byte(customContent), 0o644); err != nil {
+		t.Fatalf("writing custom overview: %v", err)
+	}
+
+	// 3. EnsureOverviewStub again: should never overwrite
+	if err := EnsureOverviewStub(vaultPath, projName, slug); err != nil {
+		t.Fatalf("EnsureOverviewStub rerun failed: %v", err)
+	}
+
+	contentAfter, err := os.ReadFile(stubPath)
+	if err != nil {
+		t.Fatalf("reading overview stub after rerun: %v", err)
+	}
+	if string(contentAfter) != customContent {
+		t.Errorf("overview stub was overwritten; expected %q, got %q", customContent, string(contentAfter))
+	}
+}

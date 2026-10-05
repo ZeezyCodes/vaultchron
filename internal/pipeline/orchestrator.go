@@ -2,9 +2,7 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -519,7 +517,13 @@ func runLegacyPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan,
 				Output:  relPath,
 			})
 
-			if idxErr := vault.UpdateIndex(cfg.Vault, &data); idxErr != nil {
+			if stubErr := vault.EnsureOverviewStub(cfg.Vault.Path, meta.Name, data.Slug); stubErr != nil {
+				fmt.Fprintf(os.Stderr, "[WARN] %s: overview stub creation failed: %v\n", meta.Name, stubErr)
+			}
+
+			if idxErr := vault.BootstrapIndex(cfg.Vault); idxErr != nil {
+				fmt.Fprintf(os.Stderr, "[ERROR] %s: index update failed: %v\n", meta.Name, idxErr)
+			} else if idxErr := vault.UpdateIndex(cfg.Vault, &data); idxErr != nil {
 				fmt.Fprintf(os.Stderr, "[ERROR] %s: index update failed: %v\n", meta.Name, idxErr)
 			}
 		}
@@ -568,23 +572,7 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 	var rows []DayResultRow
 	var counts DaySummaryCounts
 	llmCallsCount := 0
-	indexChecked := false
-	indexEnabled := true
 	indexBroken := false
-
-	checkIndex := func() {
-		if indexChecked {
-			return
-		}
-		indexChecked = true
-		indexPath := filepath.Join(cfg.Vault.Path, cfg.Vault.IndexFile)
-		if _, err := os.Stat(indexPath); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				indexEnabled = false
-				fmt.Fprintf(os.Stderr, "[WARN] index file %s not found; notes are written but the index is not updated\n", indexPath)
-			}
-		}
-	}
 
 	// Day-major processing: for each day, for each repo
 	for _, dayWindow := range plan.Days {
@@ -690,8 +678,6 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 				continue
 			}
 
-			checkIndex()
-
 			// Real run: call LLM
 			llmCallsCount++ // every attempt counts, including failures
 			sysPrompt, userPrompt := BuildDayPrompt(meta, day, dayWindow.Partial)
@@ -726,20 +712,32 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 				Partial:      dayWindow.Partial,
 			}
 
-			if indexEnabled {
-				if idxErr := vault.UpdateIndex(cfg.Vault, &devlogData); idxErr != nil {
-					fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): index update failed: %v\n", projName, day, idxErr)
-					rows = append(rows, DayResultRow{
-						Repo:    projName,
-						Date:    day,
-						Status:  "ERROR",
-						Commits: commitsStr,
-						Output:  fmt.Sprintf("index update failed: %v; note not written", idxErr),
-					})
-					counts.Errors++
-					indexBroken = true
-					continue
-				}
+			if idxErr := vault.BootstrapIndex(cfg.Vault); idxErr != nil {
+				fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): index update failed: %v\n", projName, day, idxErr)
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  "ERROR",
+					Commits: commitsStr,
+					Output:  fmt.Sprintf("index update failed: %v; note not written", idxErr),
+				})
+				counts.Errors++
+				indexBroken = true
+				continue
+			}
+
+			if idxErr := vault.UpdateIndex(cfg.Vault, &devlogData); idxErr != nil {
+				fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): index update failed: %v\n", projName, day, idxErr)
+				rows = append(rows, DayResultRow{
+					Repo:    projName,
+					Date:    day,
+					Status:  "ERROR",
+					Commits: commitsStr,
+					Output:  fmt.Sprintf("index update failed: %v; note not written", idxErr),
+				})
+				counts.Errors++
+				indexBroken = true
+				continue
 			}
 
 			notePath, writeErr := vault.WriteDevlog(cfg.Vault.Path, meta.Name, day, devlogData)
@@ -754,6 +752,10 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 				})
 				counts.Errors++
 				continue
+			}
+
+			if stubErr := vault.EnsureOverviewStub(cfg.Vault.Path, meta.Name, devlogData.Slug); stubErr != nil {
+				fmt.Fprintf(os.Stderr, "[WARN] %s: overview stub creation failed: %v\n", meta.Name, stubErr)
 			}
 
 			relPath, _ := filepath.Rel(cfg.Vault.Path, notePath)

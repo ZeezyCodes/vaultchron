@@ -469,3 +469,108 @@ Daily rollup notes link to per-project devlogs.
 		t.Error("expected updated title in content")
 	}
 }
+
+func TestBootstrapIndex_RoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	vaultCfg := config.VaultConfig{
+		Path:      tmpDir,
+		IndexFile: "00-Dev-Index.md",
+	}
+	indexPath := filepath.Join(tmpDir, "00-Dev-Index.md")
+
+	// 1. Bootstrap missing index
+	if err := BootstrapIndex(vaultCfg); err != nil {
+		t.Fatalf("BootstrapIndex failed: %v", err)
+	}
+
+	rawInitial, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("reading bootstrapped index: %v", err)
+	}
+	if !strings.HasSuffix(string(rawInitial), "\n") {
+		t.Errorf("bootstrapped index should end with a newline")
+	}
+
+	// 2. Insert first entry: Alpha on 2026-10-01
+	entry1 := &DevlogData{
+		ProjectName:  "Alpha",
+		Date:         "2026-10-01",
+		Content:      "**Alpha Abstract 1**\n\nBody",
+		CommitsCount: 1,
+		Shortstat:    "1 file changed",
+	}
+	if err := UpdateIndex(vaultCfg, entry1); err != nil {
+		t.Fatalf("UpdateIndex entry1 failed: %v", err)
+	}
+
+	// 3. Insert second entry: Beta on 2026-10-02 (newer date)
+	entry2 := &DevlogData{
+		ProjectName:  "Beta",
+		Date:         "2026-10-02",
+		Content:      "**Beta Abstract 2**\n\nBody",
+		CommitsCount: 2,
+		Shortstat:    "2 files changed",
+	}
+	if err := UpdateIndex(vaultCfg, entry2); err != nil {
+		t.Fatalf("UpdateIndex entry2 failed: %v", err)
+	}
+
+	// 4. Insert third entry: Alpha on 2026-10-02 (same date as Beta, should sort before Beta alphabetically)
+	entry3 := &DevlogData{
+		ProjectName:  "Alpha",
+		Date:         "2026-10-02",
+		Content:      "**Alpha Abstract 2**\n\nBody",
+		CommitsCount: 3,
+		Shortstat:    "3 files changed",
+	}
+	if err := UpdateIndex(vaultCfg, entry3); err != nil {
+		t.Fatalf("UpdateIndex entry3 failed: %v", err)
+	}
+
+	rawAfter3, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("reading index: %v", err)
+	}
+	contentAfter3 := string(rawAfter3)
+
+	if !strings.HasSuffix(contentAfter3, "\n") {
+		t.Errorf("index after insertions should end with a newline")
+	}
+
+	// Verify order: Alpha 2026-10-02, Beta 2026-10-02, Alpha 2026-10-01
+	idxAlpha2 := strings.Index(contentAfter3, "[[Projects/Alpha/Devlog/2026-10-02|2026-10-02]]")
+	idxBeta2 := strings.Index(contentAfter3, "[[Projects/Beta/Devlog/2026-10-02|2026-10-02]]")
+	idxAlpha1 := strings.Index(contentAfter3, "[[Projects/Alpha/Devlog/2026-10-01|2026-10-01]]")
+
+	if idxAlpha2 == -1 || idxBeta2 == -1 || idxAlpha1 == -1 {
+		t.Fatalf("missing expected entries in content:\n%s", contentAfter3)
+	}
+	if !(idxAlpha2 < idxBeta2 && idxBeta2 < idxAlpha1) {
+		t.Errorf("expected sorted order Alpha 2026-10-02 < Beta 2026-10-02 < Alpha 2026-10-01, got indices %d, %d, %d",
+			idxAlpha2, idxBeta2, idxAlpha1)
+	}
+
+	// 5. Idempotent rerun: re-apply entry3, content must be byte-identical
+	if err := UpdateIndex(vaultCfg, entry3); err != nil {
+		t.Fatalf("re-running UpdateIndex entry3 failed: %v", err)
+	}
+	rawAfterRerun, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("reading index after rerun: %v", err)
+	}
+	if string(rawAfterRerun) != contentAfter3 {
+		t.Errorf("expected idempotent rerun to be byte-identical")
+	}
+
+	// 6. BootstrapIndex on existing file should not modify it
+	if err := BootstrapIndex(vaultCfg); err != nil {
+		t.Fatalf("BootstrapIndex on existing file failed: %v", err)
+	}
+	rawAfterBootstrapAgain, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("reading index after re-bootstrap: %v", err)
+	}
+	if string(rawAfterBootstrapAgain) != contentAfter3 {
+		t.Errorf("BootstrapIndex on existing file should not modify content")
+	}
+}
