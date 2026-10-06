@@ -1,8 +1,12 @@
 package vault
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ZeezyCodes/vaultchron/internal/config"
 )
 
 const sampleLegacyDevlog = `---
@@ -142,5 +146,52 @@ func TestSlugify(t *testing.T) {
 		if got := GetSlug(tt.input); got != tt.want {
 			t.Errorf("GetSlug(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestMigrateVault_CustomProjectsDir(t *testing.T) {
+	vaultPath := t.TempDir()
+	customProjects := "Dev/Projects"
+	customIndex := "Meta/Dev-Index.md"
+	vCfg := config.VaultConfig{
+		Path:        vaultPath,
+		ProjectsDir: customProjects,
+		IndexFile:   customIndex,
+	}
+
+	noteDir := filepath.Join(vaultPath, "Dev", "Projects", "AcmeWidgets.com", "Devlog")
+	if err := os.MkdirAll(noteDir, 0o755); err != nil {
+		t.Fatalf("creating note dir: %v", err)
+	}
+	notePath := filepath.Join(noteDir, "2026-08-20.md")
+	if err := os.WriteFile(notePath, []byte(sampleLegacyDevlog), 0o644); err != nil {
+		t.Fatalf("writing sample legacy note: %v", err)
+	}
+
+	// 1. MigrateVault with default config should find 0 notes under custom dir
+	defaultModified, err := MigrateVault(vaultPath)
+	if err != nil {
+		t.Fatalf("MigrateVault(default) failed: %v", err)
+	}
+	if len(defaultModified) != 0 {
+		t.Errorf("MigrateVault(default) should not find notes under Dev/Projects, found: %v", defaultModified)
+	}
+
+	// 2. MigrateVault with custom config finds the note and migrates it
+	modified, err := MigrateVault(vaultPath, vCfg)
+	if err != nil {
+		t.Fatalf("MigrateVault(custom) failed: %v", err)
+	}
+	if len(modified) != 1 {
+		t.Fatalf("expected 1 modified file, got %d", len(modified))
+	}
+
+	migratedBytes, err := os.ReadFile(notePath)
+	if err != nil {
+		t.Fatalf("reading migrated note: %v", err)
+	}
+	expectedBreadcrumb := "[[Meta/Dev-Index|🏠 Index]] / [[Dev/Projects/AcmeWidgets.com/Overview|AcmeWidgets.com]]"
+	if !strings.Contains(string(migratedBytes), expectedBreadcrumb) {
+		t.Errorf("migrated note missing custom breadcrumb %q:\n%s", expectedBreadcrumb, string(migratedBytes))
 	}
 }

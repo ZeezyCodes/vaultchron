@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/ZeezyCodes/vaultchron/internal/config"
 )
 
 var (
@@ -229,13 +231,24 @@ func formatCallout(calloutType, title string, bodyLines []string) string {
 }
 
 // MigrateContent transforms legacy note content into the v3 callout taxonomy.
-func MigrateContent(content string, projectName, date string) (string, error) {
+func MigrateContent(content string, projectName, date string, vaultCfg ...config.VaultConfig) (string, error) {
 	fm, body, _ := ParseFrontmatter(content)
 	if fm.Project != "" {
 		projectName = fm.Project
 	}
 	if fm.Date != "" {
 		date = fm.Date
+	}
+
+	indexLink := "00-Dev-Index"
+	projectsDir := "Projects"
+	if len(vaultCfg) > 0 {
+		if vaultCfg[0].IndexFile != "" {
+			indexLink = strings.TrimSuffix(vaultCfg[0].IndexFile, ".md")
+		}
+		if vaultCfg[0].ProjectsDir != "" {
+			projectsDir = vaultCfg[0].ProjectsDir
+		}
 	}
 
 	// Check if already migrated to v3 callouts
@@ -291,7 +304,7 @@ func MigrateContent(content string, projectName, date string) (string, error) {
 		}
 
 		// Detect breadcrumb bar
-		if strings.Contains(line, "[[00-Dev-Index") {
+		if strings.Contains(line, "[[00-Dev-Index") || strings.Contains(line, "[["+indexLink) || strings.Contains(line, "🏠 Index") {
 			breadcrumbLine = trimmed
 			continue
 		}
@@ -355,7 +368,7 @@ func MigrateContent(content string, projectName, date string) (string, error) {
 	if breadcrumbLine != "" {
 		out.WriteString(breadcrumbLine + "\n\n---\n\n")
 	} else {
-		out.WriteString(fmt.Sprintf("[[00-Dev-Index|🏠 Index]] / [[Projects/%s/Overview|%s]]\n\n---\n\n", projectName, projectName))
+		out.WriteString(fmt.Sprintf("[[%s|🏠 Index]] / [[%s/%s/Overview|%s]]\n\n---\n\n", indexLink, projectsDir, projectName, projectName))
 	}
 
 	// Title
@@ -423,7 +436,7 @@ func MigrateContent(content string, projectName, date string) (string, error) {
 
 // MigrateFile reads, transforms, and safely overwrites a single devlog file
 // using an atomic temporary file write. Returns true if file was modified.
-func MigrateFile(filePath string) (bool, error) {
+func MigrateFile(filePath string, vaultCfg ...config.VaultConfig) (bool, error) {
 	raw, err := os.ReadFile(filePath)
 	if err != nil {
 		return false, fmt.Errorf("reading file %s: %w", filePath, err)
@@ -431,7 +444,7 @@ func MigrateFile(filePath string) (bool, error) {
 
 	content := string(raw)
 
-	// Deduce projectName and date from path: .../Projects/<Project>/Devlog/<Date>.md
+	// Deduce projectName and date from path: .../<Projects>/<Project>/Devlog/<Date>.md
 	parts := strings.Split(filepath.Clean(filePath), string(filepath.Separator))
 	var projectName, date string
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -443,7 +456,7 @@ func MigrateFile(filePath string) (bool, error) {
 		}
 	}
 
-	migrated, err := MigrateContent(content, projectName, date)
+	migrated, err := MigrateContent(content, projectName, date, vaultCfg...)
 	if err != nil {
 		return false, fmt.Errorf("migrating content for %s: %w", filePath, err)
 	}
@@ -460,10 +473,14 @@ func MigrateFile(filePath string) (bool, error) {
 	return true, nil
 }
 
-// MigrateVault finds and migrates all devlog markdown files under <vaultPath>/Projects/*/Devlog/*.md.
+// MigrateVault finds and migrates all devlog markdown files under <vaultPath>/<projects_dir>/*/Devlog/*.md.
 // Returns list of modified file paths.
-func MigrateVault(vaultPath string) ([]string, error) {
-	pattern := filepath.Join(vaultPath, "Projects", "*", "Devlog", "*.md")
+func MigrateVault(vaultPath string, vaultCfg ...config.VaultConfig) ([]string, error) {
+	projectsDir := "Projects"
+	if len(vaultCfg) > 0 && vaultCfg[0].ProjectsDir != "" {
+		projectsDir = vaultCfg[0].ProjectsDir
+	}
+	pattern := filepath.Join(vaultPath, filepath.FromSlash(projectsDir), "*", "Devlog", "*.md")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("globbing devlog files: %w", err)
@@ -471,7 +488,7 @@ func MigrateVault(vaultPath string) ([]string, error) {
 
 	var modified []string
 	for _, file := range matches {
-		changed, err := MigrateFile(file)
+		changed, err := MigrateFile(file, vaultCfg...)
 		if err != nil {
 			return modified, fmt.Errorf("failed migrating %s: %w", file, err)
 		}

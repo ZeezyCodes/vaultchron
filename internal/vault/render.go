@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+
+	"github.com/ZeezyCodes/vaultchron/internal/config"
 )
 
 //go:embed templates/devlog.md.tmpl templates/overview.md.tmpl
@@ -29,6 +31,9 @@ type DevlogData struct {
 	Now          string   // generation timestamp
 	Content      string   // LLM-generated callout body
 	Partial      bool     // true if the note represents a partial day
+	IndexFile    string   // configured index_file (or IndexLink)
+	ProjectsDir  string   // configured projects_dir
+	IndexLink    string   // computed or explicit index link target
 }
 
 // RenderDevlog executes the embedded devlog template and returns the formatted
@@ -36,6 +41,16 @@ type DevlogData struct {
 // abstract, info, bug, warning, check sections). A CRLF checkout of the
 // template is normalized to LF.
 func RenderDevlog(data DevlogData) (string, error) {
+	if data.IndexLink == "" {
+		if data.IndexFile != "" {
+			data.IndexLink = strings.TrimSuffix(data.IndexFile, ".md")
+		} else {
+			data.IndexLink = "00-Dev-Index"
+		}
+	}
+	if data.ProjectsDir == "" {
+		data.ProjectsDir = "Projects"
+	}
 	tmplText, err := templatesFS.ReadFile("templates/devlog.md.tmpl")
 	if err != nil {
 		return "", fmt.Errorf("reading embedded template: %w", err)
@@ -56,9 +71,12 @@ func renderTemplate(tmplText []byte, data DevlogData) (string, error) {
 	return buf.String(), nil
 }
 
-// devlogPath returns the filesystem path to a devlog note for the given vault, project, and date.
-func devlogPath(vaultPath, projectName, date string) string {
-	return filepath.Join(vaultPath, "Projects", projectName, "Devlog", date+".md")
+// devlogPath returns the filesystem path to a devlog note for the given vault, projectsDir, project, and date.
+func devlogPath(vaultPath, projectsDir, projectName, date string) string {
+	if projectsDir == "" {
+		projectsDir = "Projects"
+	}
+	return filepath.Join(vaultPath, filepath.FromSlash(projectsDir), projectName, "Devlog", date+".md")
 }
 
 // DevlogExists checks whether a devlog note exists for the given project and date in the vault,
@@ -67,8 +85,12 @@ func devlogPath(vaultPath, projectName, date string) string {
 // A missing note returns (false, false, nil). If the note exists, partial is true only if the note's
 // frontmatter (the initial --- block, inspected within at most the first 50 lines) contains a line
 // that is exactly "partial: true" (with trailing \r trimmed). Occurrences in the body are ignored.
-func DevlogExists(vaultPath, project, date string) (exists bool, partial bool, err error) {
-	path := devlogPath(vaultPath, project, date)
+func DevlogExists(vaultPath, project, date string, projectsDir ...string) (exists bool, partial bool, err error) {
+	pDir := "Projects"
+	if len(projectsDir) > 0 && projectsDir[0] != "" {
+		pDir = projectsDir[0]
+	}
+	path := devlogPath(vaultPath, pDir, project, date)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -110,9 +132,9 @@ func DevlogExists(vaultPath, project, date string) (exists bool, partial bool, e
 }
 
 // WriteDevlog renders the template and writes the devlog to
-// <vault>/Projects/<project>/Devlog/<date>.md, creating directories as needed.
+// <vault>/<projects_dir>/<project>/Devlog/<date>.md, creating directories as needed.
 func WriteDevlog(vaultPath, projectName, date string, data DevlogData) (string, error) {
-	targetPath := devlogPath(vaultPath, projectName, date)
+	targetPath := devlogPath(vaultPath, data.ProjectsDir, projectName, date)
 	devlogDir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(devlogDir, 0o755); err != nil {
 		return "", fmt.Errorf("creating devlog directory: %w", err)
@@ -132,11 +154,20 @@ func WriteDevlog(vaultPath, projectName, date string, data DevlogData) (string, 
 type OverviewData struct {
 	ProjectName string // e.g. "AcmeWidgets.com"
 	Slug        string // e.g. "acmewidgets"
+	IndexFile   string // e.g. "00-Dev-Index.md"
+	IndexLink   string // computed or explicit index link target
 }
 
 // RenderOverview executes the embedded overview template and returns the formatted
 // markdown string. A CRLF checkout of the template is normalized to LF.
 func RenderOverview(data OverviewData) (string, error) {
+	if data.IndexLink == "" {
+		if data.IndexFile != "" {
+			data.IndexLink = strings.TrimSuffix(data.IndexFile, ".md")
+		} else {
+			data.IndexLink = "00-Dev-Index"
+		}
+	}
 	tmplText, err := templatesFS.ReadFile("templates/overview.md.tmpl")
 	if err != nil {
 		return "", fmt.Errorf("reading embedded template: %w", err)
@@ -153,15 +184,28 @@ func RenderOverview(data OverviewData) (string, error) {
 	return buf.String(), nil
 }
 
-// overviewPath returns the filesystem path to an overview note for the given vault and project.
-func overviewPath(vaultPath, projectName string) string {
-	return filepath.Join(vaultPath, "Projects", projectName, "Overview.md")
+// overviewPath returns the filesystem path to an overview note for the given vault, projectsDir, and project.
+func overviewPath(vaultPath, projectsDir, projectName string) string {
+	if projectsDir == "" {
+		projectsDir = "Projects"
+	}
+	return filepath.Join(vaultPath, filepath.FromSlash(projectsDir), projectName, "Overview.md")
 }
 
-// EnsureOverviewStub creates <vault>/Projects/<projectName>/Overview.md if it does
+// EnsureOverviewStub creates <vault>/<projects_dir>/<projectName>/Overview.md if it does
 // not already exist. It never overwrites an existing file.
-func EnsureOverviewStub(vaultPath, projectName, slug string) error {
-	targetPath := overviewPath(vaultPath, projectName)
+func EnsureOverviewStub(vaultPath, projectName, slug string, vaultCfg ...config.VaultConfig) error {
+	projectsDir := "Projects"
+	indexFile := "00-Dev-Index.md"
+	if len(vaultCfg) > 0 {
+		if vaultCfg[0].ProjectsDir != "" {
+			projectsDir = vaultCfg[0].ProjectsDir
+		}
+		if vaultCfg[0].IndexFile != "" {
+			indexFile = vaultCfg[0].IndexFile
+		}
+	}
+	targetPath := overviewPath(vaultPath, projectsDir, projectName)
 	_, err := os.Stat(targetPath)
 	if err == nil {
 		return nil
@@ -173,6 +217,7 @@ func EnsureOverviewStub(vaultPath, projectName, slug string) error {
 	rendered, err := RenderOverview(OverviewData{
 		ProjectName: projectName,
 		Slug:        slug,
+		IndexFile:   indexFile,
 	})
 	if err != nil {
 		return err

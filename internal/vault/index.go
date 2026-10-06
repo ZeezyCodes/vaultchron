@@ -17,7 +17,11 @@ const defaultIndexContent = "# Dev Index\n\n## Recent Dev Logs\n\n| Date | Notes
 // BootstrapIndex creates the root dev index file with minimal content if it does not already exist.
 // If the index file already exists, it is never modified or overwritten.
 func BootstrapIndex(vaultCfg config.VaultConfig) error {
-	indexPath := filepath.Join(vaultCfg.Path, vaultCfg.IndexFile)
+	indexFile := vaultCfg.IndexFile
+	if indexFile == "" {
+		indexFile = "00-Dev-Index.md"
+	}
+	indexPath := filepath.Join(vaultCfg.Path, filepath.FromSlash(indexFile))
 	_, err := os.Stat(indexPath)
 	if err == nil {
 		return nil
@@ -112,7 +116,11 @@ func formatTableRow(data *DevlogData, link, summary string, headerCells []string
 // and project are updated in place. Unparseable rows (without a matching devlog link)
 // are never reordered, removed, or modified.
 func UpdateIndex(vaultCfg config.VaultConfig, data *DevlogData) error {
-	indexPath := filepath.Join(vaultCfg.Path, vaultCfg.IndexFile)
+	indexFile := vaultCfg.IndexFile
+	if indexFile == "" {
+		indexFile = "00-Dev-Index.md"
+	}
+	indexPath := filepath.Join(vaultCfg.Path, filepath.FromSlash(indexFile))
 
 	raw, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -129,7 +137,11 @@ func UpdateIndex(vaultCfg config.VaultConfig, data *DevlogData) error {
 	lines := strings.Split(content, "\n")
 
 	summary := extractSummary(data.Content, data.CommitsCount, data.Shortstat)
-	link := fmt.Sprintf("[[Projects/%s/Devlog/%s|%s]]", data.ProjectName, data.Date, data.Date)
+	projectsDir := vaultCfg.ProjectsDir
+	if projectsDir == "" {
+		projectsDir = "Projects"
+	}
+	link := fmt.Sprintf("[[%s/%s/Devlog/%s|%s]]", projectsDir, data.ProjectName, data.Date, data.Date)
 
 	// Step 1: Locate the recent logs section header.
 	recentHeaderIdx := -1

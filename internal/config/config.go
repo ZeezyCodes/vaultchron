@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -186,6 +187,16 @@ func Load(path string) (*Config, error) {
 		cfg.ProjectTags = make(map[string]ProjectTag)
 	}
 
+	var relErr error
+	cfg.Vault.IndexFile, relErr = validateVaultRelPath("index_file", cfg.Vault.IndexFile)
+	if relErr != nil {
+		return nil, relErr
+	}
+	cfg.Vault.ProjectsDir, relErr = validateVaultRelPath("projects_dir", cfg.Vault.ProjectsDir)
+	if relErr != nil {
+		return nil, relErr
+	}
+
 	if cfg.Vault.Path != "" {
 		cfg.Vault.Path = ExpandPath(cfg.Vault.Path)
 	}
@@ -276,4 +287,32 @@ func DefaultConfig() *Config {
 		},
 		ProjectTags: map[string]ProjectTag{},
 	}
+}
+
+// validateVaultRelPath normalizes and validates a vault-relative path setting.
+// It converts backslashes to forward slashes, trims surrounding whitespace and trailing slashes,
+// and rejects empty paths, absolute paths (leading / or Windows drive), paths with '..' segments,
+// or paths that clean to '.'.
+func validateVaultRelPath(fieldName, val string) (string, error) {
+	s := strings.ReplaceAll(val, `\`, `/`)
+	s = strings.TrimSpace(s)
+	s = strings.TrimRight(s, "/")
+	if s == "" {
+		return "", fmt.Errorf("invalid config: vault.%s must not be empty", fieldName)
+	}
+	if strings.HasPrefix(s, "/") {
+		return "", fmt.Errorf("invalid config: vault.%s must be a relative path, got %q", fieldName, val)
+	}
+	if len(s) >= 2 && s[1] == ':' && ((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z')) {
+		return "", fmt.Errorf("invalid config: vault.%s must be a relative path, got %q", fieldName, val)
+	}
+	for _, seg := range strings.Split(s, "/") {
+		if seg == ".." {
+			return "", fmt.Errorf("invalid config: vault.%s cannot contain '..' segments, got %q", fieldName, val)
+		}
+	}
+	if path.Clean(s) == "." {
+		return "", fmt.Errorf("invalid config: vault.%s cannot resolve to '.', got %q", fieldName, val)
+	}
+	return s, nil
 }

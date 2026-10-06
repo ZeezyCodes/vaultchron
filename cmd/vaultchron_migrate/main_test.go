@@ -350,3 +350,49 @@ func TestHasVersionFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestRunMigrate_CustomConfig(t *testing.T) {
+	tDir := t.TempDir()
+	vaultDir := filepath.Join(tDir, "vault")
+	devlogDir := filepath.Join(vaultDir, "Dev", "Projects", "SampleRepo", "Devlog")
+	if err := os.MkdirAll(devlogDir, 0o755); err != nil {
+		t.Fatalf("failed to create devlog dir: %v", err)
+	}
+
+	notePath := filepath.Join(devlogDir, "2026-09-28.md")
+	legacyContent := "## Telemetry\n- commit 12345\n\n## Architecture\nsome arch notes"
+	if err := os.WriteFile(notePath, []byte(legacyContent), 0o644); err != nil {
+		t.Fatalf("failed to write test devlog: %v", err)
+	}
+
+	cfgPath := filepath.Join(tDir, "config.yaml")
+	cfgContent := "vault:\n  path: " + filepath.ToSlash(vaultDir) + "\n  projects_dir: Dev/Projects\n  index_file: Meta/Dev-Index.md\nscan:\n  roots: [" + filepath.ToSlash(tDir) + "]\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	// 1. Dry-run finds note in custom projects dir
+	var outDry, errOutDry bytes.Buffer
+	codeDry := runMigrate(vaultDir, cfgPath, "", true, &outDry, &errOutDry)
+	if codeDry != 0 {
+		t.Fatalf("expected code 0, got %d. stderr: %s", codeDry, errOutDry.String())
+	}
+	if !strings.Contains(outDry.String(), "Found 1 devlog notes") {
+		t.Errorf("expected 1 devlog note found in custom dir, got: %s", outDry.String())
+	}
+
+	// 2. Real migration updates note with custom breadcrumbs
+	var outAct, errOutAct bytes.Buffer
+	codeAct := runMigrate(vaultDir, cfgPath, "", false, &outAct, &errOutAct)
+	if codeAct != 0 {
+		t.Fatalf("expected code 0, got %d. stderr: %s", codeAct, errOutAct.String())
+	}
+	migratedBytes, err := os.ReadFile(notePath)
+	if err != nil {
+		t.Fatalf("reading migrated note: %v", err)
+	}
+	expectedBreadcrumb := "[[Meta/Dev-Index|🏠 Index]] / [[Dev/Projects/SampleRepo/Overview|SampleRepo]]"
+	if !strings.Contains(string(migratedBytes), expectedBreadcrumb) {
+		t.Errorf("expected breadcrumb %q, got:\n%s", expectedBreadcrumb, string(migratedBytes))
+	}
+}

@@ -6,7 +6,7 @@
 vault:
   path: ~/vault
   index_file: 00-Dev-Index.md
-  # Note: rollups_dir, projects_dir, and recent_days are reserved, currently unused.
+  # Note: rollups_dir and recent_days are reserved, currently unused.
   rollups_dir: Daily-Rollups
   projects_dir: Projects
   recent_days: 7

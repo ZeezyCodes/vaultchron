@@ -1788,3 +1788,225 @@ func TestPipeline_LegacyWindow_IndexBootstrap(t *testing.T) {
 		t.Errorf("expected overview stub in legacy run at %s: %v", overviewPath, err)
 	}
 }
+
+func TestPipeline_CustomConfig_DayMode(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "service.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("writing service.go: %v", err)
+	}
+	runGit(nil, "add", "service.go")
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-10-02T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-10-02T10:00:00-05:00",
+	}, "commit", "-m", "Commit on 2026-10-02")
+
+	ts, reqs := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	cfg.Vault.IndexFile = "Meta/Dev-Index.md"
+	cfg.Vault.ProjectsDir = "Dev/Projects"
+
+	opts := PipelineOptions{
+		Date: "2026-10-02",
+		Now:  func() time.Time { return now },
+		Loc:  loc,
+	}
+
+	captured := captureStderr(t, func() {
+		if err := Run(cfg, opts); err != nil {
+			t.Fatalf("day mode run failed: %v", err)
+		}
+	})
+
+	if strings.Contains(captured, "[ERROR]") {
+		t.Errorf("expected no [ERROR] in stderr, got:\n%s", captured)
+	}
+
+	projectName := collector.ProjectName(repoDir)
+
+	// Verify expected files exist
+	expectedNotePath := filepath.Join(cfg.Vault.Path, "Dev", "Projects", projectName, "Devlog", "2026-10-02.md")
+	if _, err := os.Stat(expectedNotePath); err != nil {
+		t.Fatalf("expected note at %s: %v", expectedNotePath, err)
+	}
+	expectedOverviewPath := filepath.Join(cfg.Vault.Path, "Dev", "Projects", projectName, "Overview.md")
+	if _, err := os.Stat(expectedOverviewPath); err != nil {
+		t.Fatalf("expected overview stub at %s: %v", expectedOverviewPath, err)
+	}
+	expectedIndexPath := filepath.Join(cfg.Vault.Path, "Meta", "Dev-Index.md")
+	indexBytes, err := os.ReadFile(expectedIndexPath)
+	if err != nil {
+		t.Fatalf("expected index at %s: %v", expectedIndexPath, err)
+	}
+	expectedLink := fmt.Sprintf("[[Dev/Projects/%s/Devlog/2026-10-02|2026-10-02]]", projectName)
+	if !strings.Contains(string(indexBytes), expectedLink) {
+		t.Errorf("expected index to contain %s, got:\n%s", expectedLink, string(indexBytes))
+	}
+
+	// Verify NOTHING created under default Projects/ or 00-Dev-Index.md
+	defaultProjectsDir := filepath.Join(cfg.Vault.Path, "Projects")
+	if _, err := os.Stat(defaultProjectsDir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected NOTHING under default Projects/, but it exists")
+	}
+	defaultIndexPath := filepath.Join(cfg.Vault.Path, "00-Dev-Index.md")
+	if _, err := os.Stat(defaultIndexPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected NOTHING at default 00-Dev-Index.md, but it exists")
+	}
+
+	// Re-run: should skip and make no additional LLM calls
+	initialCalls := len(*reqs)
+	capturedRerun := captureStderr(t, func() {
+		if err := Run(cfg, opts); err != nil {
+			t.Fatalf("re-run failed: %v", err)
+		}
+	})
+	if strings.Contains(capturedRerun, "[ERROR]") {
+		t.Errorf("expected no [ERROR] in re-run stderr, got:\n%s", capturedRerun)
+	}
+	if len(*reqs) != initialCalls {
+		t.Errorf("expected re-run to make 0 additional LLM calls, got %d", len(*reqs)-initialCalls)
+	}
+}
+
+func TestPipeline_CustomConfig_LegacyWindow(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "handler.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("writing handler.go: %v", err)
+	}
+	runGit(nil, "add", "handler.go")
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-10-03T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-10-03T10:00:00-05:00",
+	}, "commit", "-m", "Commit on 2026-10-03")
+
+	ts, reqs := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	cfg.Vault.IndexFile = "Meta/Dev-Index.md"
+	cfg.Vault.ProjectsDir = "Dev/Projects"
+
+	opts := PipelineOptions{
+		Window:   now.Add(-2 * time.Hour).Format(time.RFC3339),
+		IsWindow: true,
+		Now:      func() time.Time { return now },
+		Loc:      loc,
+	}
+
+	captured := captureStderr(t, func() {
+		if err := Run(cfg, opts); err != nil {
+			t.Fatalf("legacy window run failed: %v", err)
+		}
+	})
+
+	if strings.Contains(captured, "[ERROR]") {
+		t.Errorf("expected no [ERROR] in stderr, got:\n%s", captured)
+	}
+
+	projectName := collector.ProjectName(repoDir)
+	today := now.Format("2006-01-02")
+
+	// Verify expected files exist
+	expectedNotePath := filepath.Join(cfg.Vault.Path, "Dev", "Projects", projectName, "Devlog", today+".md")
+	if _, err := os.Stat(expectedNotePath); err != nil {
+		t.Fatalf("expected note at %s: %v", expectedNotePath, err)
+	}
+	expectedOverviewPath := filepath.Join(cfg.Vault.Path, "Dev", "Projects", projectName, "Overview.md")
+	if _, err := os.Stat(expectedOverviewPath); err != nil {
+		t.Fatalf("expected overview stub at %s: %v", expectedOverviewPath, err)
+	}
+	expectedIndexPath := filepath.Join(cfg.Vault.Path, "Meta", "Dev-Index.md")
+	indexBytes, err := os.ReadFile(expectedIndexPath)
+	if err != nil {
+		t.Fatalf("expected index at %s: %v", expectedIndexPath, err)
+	}
+	expectedLink := fmt.Sprintf("[[Dev/Projects/%s/Devlog/%s|%s]]", projectName, today, today)
+	if !strings.Contains(string(indexBytes), expectedLink) {
+		t.Errorf("expected index to contain %s, got:\n%s", expectedLink, string(indexBytes))
+	}
+
+	// Verify NOTHING created under default Projects/ or 00-Dev-Index.md
+	defaultProjectsDir := filepath.Join(cfg.Vault.Path, "Projects")
+	if _, err := os.Stat(defaultProjectsDir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected NOTHING under default Projects/, but it exists")
+	}
+	defaultIndexPath := filepath.Join(cfg.Vault.Path, "00-Dev-Index.md")
+	if _, err := os.Stat(defaultIndexPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected NOTHING at default 00-Dev-Index.md, but it exists")
+	}
+
+	// Re-run: should skip and make no additional LLM calls
+	initialCalls := len(*reqs)
+	capturedRerun := captureStderr(t, func() {
+		if err := Run(cfg, opts); err != nil {
+			t.Fatalf("legacy re-run failed: %v", err)
+		}
+	})
+	if strings.Contains(capturedRerun, "[ERROR]") {
+		t.Errorf("expected no [ERROR] in re-run stderr, got:\n%s", capturedRerun)
+	}
+	if len(*reqs) != initialCalls {
+		t.Errorf("expected legacy re-run to make 0 additional LLM calls, got %d", len(*reqs)-initialCalls)
+	}
+}
+
+func TestPipeline_CustomConfig_DryRun(t *testing.T) {
+	loc := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, loc)
+	repoDir, runGit := setupTestGitRepo(t)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "dry.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("writing dry.go: %v", err)
+	}
+	runGit(nil, "add", "dry.go")
+	runGit([]string{
+		"GIT_AUTHOR_DATE=2026-10-02T10:00:00-05:00",
+		"GIT_COMMITTER_DATE=2026-10-02T10:00:00-05:00",
+	}, "commit", "-m", "Commit on 2026-10-02")
+
+	ts, reqs := newMockLLMServer(t)
+	defer ts.Close()
+
+	cfg := setupTestConfig(t, repoDir, ts.URL)
+	cfg.Vault.IndexFile = "Meta/Dev-Index.md"
+	cfg.Vault.ProjectsDir = "Dev/Projects"
+
+	opts := PipelineOptions{
+		Date:   "2026-10-02",
+		DryRun: true,
+		Now:    func() time.Time { return now },
+		Loc:    loc,
+	}
+
+	if err := Run(cfg, opts); err != nil {
+		t.Fatalf("dry-run day mode failed: %v", err)
+	}
+	if len(*reqs) != 0 {
+		t.Errorf("expected 0 LLM calls, got %d", len(*reqs))
+	}
+
+	projectName := collector.ProjectName(repoDir)
+	exists, _, _ := vault.DevlogExists(cfg.Vault.Path, projectName, "2026-10-02", cfg.Vault.ProjectsDir)
+	if exists {
+		t.Errorf("expected note NOT to exist after dry-run")
+	}
+
+	// Legacy window dry-run
+	legacyOpts := PipelineOptions{
+		Window:   "24.hours.ago",
+		IsWindow: true,
+		DryRun:   true,
+		Now:      func() time.Time { return now },
+		Loc:      loc,
+	}
+	if err := Run(cfg, legacyOpts); err != nil {
+		t.Fatalf("legacy dry-run failed: %v", err)
+	}
+}

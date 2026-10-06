@@ -182,7 +182,7 @@ func runWithArgs(args []string, stdout, stderr io.Writer, nowFunc func() time.Ti
 			vaultPath = config.DefaultConfig().Vault.Path
 		}
 		fmt.Fprintf(stdout, "Migrating legacy devlogs in vault: %s\n", vaultPath)
-		modified, err := vault.MigrateVault(vaultPath)
+		modified, err := vault.MigrateVault(vaultPath, cfg.Vault)
 		if err != nil {
 			fmt.Fprintf(stderr, "error migrating vault: %v\n", err)
 			return 1

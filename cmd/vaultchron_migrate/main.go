@@ -53,19 +53,24 @@ func hasVersionFlag(args []string) bool {
 	return false
 }
 
-// resolveVaultPath resolves the Obsidian vault root path using vaultFlag,
+// resolveVaultConfig resolves the Obsidian vault configuration using vaultFlag,
 // then config file, and finally fallback to DefaultConfig.
-func resolveVaultPath(vaultFlag, configPath string, dryRun bool, errOut io.Writer) (string, error) {
-	if vaultFlag != "" {
-		return vaultFlag, nil
-	}
+// If vaultFlag or fileFlag is supplied without a loadable config, DefaultConfig settings are used.
+func resolveVaultConfig(vaultFlag, configPath, fileFlag string, dryRun bool, errOut io.Writer) (config.VaultConfig, error) {
+	vCfg := config.DefaultConfig().Vault
 	resolved, err := config.Resolve(config.ResolveOptions{
 		Flag:         configPath,
 		AllowExample: dryRun,
 		Getenv:       os.Getenv,
 	})
 	if err != nil {
-		return "", err
+		if vaultFlag != "" || fileFlag != "" {
+			if vaultFlag != "" {
+				vCfg.Path = vaultFlag
+			}
+			return vCfg, nil
+		}
+		return vCfg, err
 	}
 	if resolved.Source == "example" {
 		fmt.Fprintln(errOut, "[INFO] config.yaml not found, falling back to config.example.yaml")
@@ -74,17 +79,39 @@ func resolveVaultPath(vaultFlag, configPath string, dryRun bool, errOut io.Write
 	}
 	cfg, err := config.Load(resolved.Path)
 	if err != nil {
-		return "", err
+		if vaultFlag != "" || fileFlag != "" {
+			if vaultFlag != "" {
+				vCfg.Path = vaultFlag
+			}
+			return vCfg, nil
+		}
+		return vCfg, err
 	}
-	if cfg.Vault.Path != "" {
-		return cfg.Vault.Path, nil
+	vCfg = cfg.Vault
+	if vaultFlag != "" {
+		vCfg.Path = vaultFlag
+	} else if vCfg.Path == "" {
+		vCfg.Path = config.DefaultConfig().Vault.Path
 	}
-	return config.DefaultConfig().Vault.Path, nil
+	return vCfg, nil
+}
+
+// resolveVaultPath resolves the Obsidian vault root path using vaultFlag,
+// then config file, and finally fallback to DefaultConfig.
+func resolveVaultPath(vaultFlag, configPath string, dryRun bool, errOut io.Writer) (string, error) {
+	vCfg, err := resolveVaultConfig(vaultFlag, configPath, "", dryRun, errOut)
+	return vCfg.Path, err
 }
 
 // runMigrate executes migration or preview logic based on options, writing human-readable
 // status to out and error diagnostics to errOut. Returns exit code (0 on success, 1 on error).
 func runMigrate(vaultFlag, configPath, fileFlag string, dryRun bool, out, errOut io.Writer) int {
+	vaultCfg, err := resolveVaultConfig(vaultFlag, configPath, fileFlag, dryRun, errOut)
+	if err != nil {
+		fmt.Fprintf(errOut, "error: %v\n", err)
+		return 1
+	}
+
 	if fileFlag != "" {
 		if dryRun {
 			raw, err := os.ReadFile(fileFlag)
@@ -92,7 +119,7 @@ func runMigrate(vaultFlag, configPath, fileFlag string, dryRun bool, out, errOut
 				fmt.Fprintf(errOut, "error reading file %s: %v\n", fileFlag, err)
 				return 1
 			}
-			migrated, err := vault.MigrateContent(string(raw), "", "")
+			migrated, err := vault.MigrateContent(string(raw), "", "", vaultCfg)
 			if err != nil {
 				fmt.Fprintf(errOut, "error transforming %s: %v\n", fileFlag, err)
 				return 1
@@ -101,7 +128,7 @@ func runMigrate(vaultFlag, configPath, fileFlag string, dryRun bool, out, errOut
 			return 0
 		}
 
-		changed, err := vault.MigrateFile(fileFlag)
+		changed, err := vault.MigrateFile(fileFlag, vaultCfg)
 		if err != nil {
 			fmt.Fprintf(errOut, "error migrating file %s: %v\n", fileFlag, err)
 			return 1
@@ -114,12 +141,8 @@ func runMigrate(vaultFlag, configPath, fileFlag string, dryRun bool, out, errOut
 		return 0
 	}
 
-	vaultPath, err := resolveVaultPath(vaultFlag, configPath, dryRun, errOut)
-	if err != nil {
-		fmt.Fprintf(errOut, "error: %v\n", err)
-		return 1
-	}
-	pattern := filepath.Join(vaultPath, "Projects", "*", "Devlog", "*.md")
+	vaultPath := vaultCfg.Path
+	pattern := filepath.Join(vaultPath, filepath.FromSlash(vaultCfg.ProjectsDir), "*", "Devlog", "*.md")
 	files, err := filepath.Glob(pattern)
 	if err != nil {
 		fmt.Fprintf(errOut, "error searching for devlog files in %s: %v\n", vaultPath, err)
@@ -136,7 +159,7 @@ func runMigrate(vaultFlag, configPath, fileFlag string, dryRun bool, out, errOut
 			if err != nil {
 				continue
 			}
-			migrated, err := vault.MigrateContent(string(raw), "", "")
+			migrated, err := vault.MigrateContent(string(raw), "", "", vaultCfg)
 			if err == nil && migrated != string(raw) {
 				fmt.Fprintf(out, "  [PENDING] %s\n", f)
 				count++
@@ -146,7 +169,7 @@ func runMigrate(vaultFlag, configPath, fileFlag string, dryRun bool, out, errOut
 		return 0
 	}
 
-	modified, err := vault.MigrateVault(vaultPath)
+	modified, err := vault.MigrateVault(vaultPath, vaultCfg)
 	if err != nil {
 		fmt.Fprintf(errOut, "migration failed: %v\n", err)
 		return 1

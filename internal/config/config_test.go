@@ -1,9 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -499,5 +501,99 @@ llm:
 				}
 			}
 		})
+	}
+}
+
+func TestLoad_VaultConfigValidation(t *testing.T) {
+	baseYAML := `
+vault:
+  path: /tmp/test-vault
+  %s: %q
+scan:
+  roots: [/tmp/test-projects]
+`
+	tests := []struct {
+		name    string
+		field   string
+		val     string
+		wantErr bool
+		wantVal string
+	}{
+		// accepts nested relative values
+		{name: "index_file nested relative", field: "index_file", val: "Meta/Dev-Index.md", wantErr: false, wantVal: "Meta/Dev-Index.md"},
+		{name: "projects_dir nested relative", field: "projects_dir", val: "Dev/Projects", wantErr: false, wantVal: "Dev/Projects"},
+		// normalizes backslashes and trailing slashes
+		{name: "index_file backslashes and trailing slash", field: "index_file", val: `Meta\Dev-Index.md\`, wantErr: false, wantVal: "Meta/Dev-Index.md"},
+		{name: "projects_dir backslashes and trailing slash", field: "projects_dir", val: `Dev\Projects\`, wantErr: false, wantVal: "Dev/Projects"},
+		{name: "projects_dir surrounding whitespace", field: "projects_dir", val: "   Nested/Projects/   ", wantErr: false, wantVal: "Nested/Projects"},
+		// rejects absolute paths
+		{name: "index_file leading slash", field: "index_file", val: "/Meta/Dev-Index.md", wantErr: true},
+		{name: "projects_dir leading slash", field: "projects_dir", val: "/Projects", wantErr: true},
+		// rejects Windows drive C:\x
+		{name: "index_file Windows drive", field: "index_file", val: `C:\Meta\Dev-Index.md`, wantErr: true},
+		{name: "projects_dir Windows drive", field: "projects_dir", val: `C:\Projects`, wantErr: true},
+		// rejects .. segments
+		{name: "index_file .. segment", field: "index_file", val: "a/../../b", wantErr: true},
+		{name: "projects_dir .. segment", field: "projects_dir", val: "a/../../b", wantErr: true},
+		{name: "index_file solitary ..", field: "index_file", val: "..", wantErr: true},
+		{name: "projects_dir solitary ..", field: "projects_dir", val: "..", wantErr: true},
+		// rejects .
+		{name: "index_file solitary .", field: "index_file", val: ".", wantErr: true},
+		{name: "projects_dir solitary .", field: "projects_dir", val: ".", wantErr: true},
+		// rejects whitespace-only
+		{name: "index_file whitespace only", field: "index_file", val: "   ", wantErr: true},
+		{name: "projects_dir whitespace only", field: "projects_dir", val: "   ", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := fmt.Sprintf(baseYAML, tt.field, tt.val)
+			tmpFile := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(tmpFile, []byte(content), 0o644); err != nil {
+				t.Fatalf("writing temp config: %v", err)
+			}
+			cfg, err := Load(tmpFile)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Load() err = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if !tt.wantErr {
+				var gotVal string
+				if tt.field == "index_file" {
+					gotVal = cfg.Vault.IndexFile
+				} else {
+					gotVal = cfg.Vault.ProjectsDir
+				}
+				if gotVal != tt.wantVal {
+					t.Errorf("got %q, want %q", gotVal, tt.wantVal)
+				}
+			} else {
+				if !strings.Contains(err.Error(), tt.field) {
+					t.Errorf("error %q should name field %q", err.Error(), tt.field)
+				}
+			}
+		})
+	}
+}
+
+func TestLoad_VaultConfigDefaultsUnchanged(t *testing.T) {
+	yamlContent := `
+vault:
+  path: /tmp/test-vault
+scan:
+  roots: [/tmp/test-projects]
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(tmpFile, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("writing temp config: %v", err)
+	}
+	cfg, err := Load(tmpFile)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.Vault.IndexFile != "00-Dev-Index.md" {
+		t.Errorf("expected default IndexFile '00-Dev-Index.md', got %q", cfg.Vault.IndexFile)
+	}
+	if cfg.Vault.ProjectsDir != "Projects" {
+		t.Errorf("expected default ProjectsDir 'Projects', got %q", cfg.Vault.ProjectsDir)
 	}
 }

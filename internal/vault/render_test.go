@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ZeezyCodes/vaultchron/internal/config"
 )
 
 func sampleDevlogData(partial bool) DevlogData {
@@ -280,5 +282,65 @@ func TestEnsureOverviewStub(t *testing.T) {
 	}
 	if string(contentAfter) != customContent {
 		t.Errorf("overview stub was overwritten; expected %q, got %q", customContent, string(contentAfter))
+	}
+}
+
+func TestCustomVaultPaths(t *testing.T) {
+	vaultPath := t.TempDir()
+	customProjects := "Dev/Projects"
+	customIndex := "Meta/Dev-Index.md"
+	vCfg := config.VaultConfig{
+		Path:        vaultPath,
+		ProjectsDir: customProjects,
+		IndexFile:   customIndex,
+	}
+
+	data := sampleDevlogData(false)
+	data.ProjectsDir = customProjects
+	data.IndexFile = customIndex
+
+	// 1. Write devlog under custom projects dir
+	writtenPath, err := WriteDevlog(vaultPath, data.ProjectName, data.Date, data)
+	if err != nil {
+		t.Fatalf("WriteDevlog failed: %v", err)
+	}
+
+	expectedPath := filepath.Join(vaultPath, "Dev", "Projects", data.ProjectName, "Devlog", data.Date+".md")
+	if writtenPath != expectedPath {
+		t.Errorf("expected devlog written to %s, got %s", expectedPath, writtenPath)
+	}
+
+	// 2. DevlogExists finds it with custom projects dir, not with default
+	exists, _, err := DevlogExists(vaultPath, data.ProjectName, data.Date, customProjects)
+	if err != nil || !exists {
+		t.Fatalf("DevlogExists(custom) failed: exists=%v, err=%v", exists, err)
+	}
+	defaultExists, _, _ := DevlogExists(vaultPath, data.ProjectName, data.Date)
+	if defaultExists {
+		t.Errorf("DevlogExists(default) should not find note written under custom projects dir")
+	}
+
+	// 3. Devlog breadcrumb uses custom links
+	noteBytes, err := os.ReadFile(writtenPath)
+	if err != nil {
+		t.Fatalf("reading written note: %v", err)
+	}
+	expectedDevlogBreadcrumb := "[[Meta/Dev-Index|🏠 Index]] / [[Dev/Projects/AcmeWidgets.com/Overview|AcmeWidgets.com]] / [[Daily-Rollups/2026-10-03|📅 Rollup]]"
+	if !strings.Contains(string(noteBytes), expectedDevlogBreadcrumb) {
+		t.Errorf("devlog breadcrumb missing expected custom link:\n%s", string(noteBytes))
+	}
+
+	// 4. EnsureOverviewStub creates stub in custom projects dir with custom index link
+	if err := EnsureOverviewStub(vaultPath, data.ProjectName, data.Slug, vCfg); err != nil {
+		t.Fatalf("EnsureOverviewStub failed: %v", err)
+	}
+	stubPath := filepath.Join(vaultPath, "Dev", "Projects", data.ProjectName, "Overview.md")
+	stubBytes, err := os.ReadFile(stubPath)
+	if err != nil {
+		t.Fatalf("reading overview stub: %v", err)
+	}
+	expectedStubBreadcrumb := "[[Meta/Dev-Index|🏠 Index]] / AcmeWidgets.com"
+	if !strings.Contains(string(stubBytes), expectedStubBreadcrumb) {
+		t.Errorf("overview stub missing expected custom link:\n%s", string(stubBytes))
 	}
 }

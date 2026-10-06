@@ -574,3 +574,58 @@ func TestBootstrapIndex_RoundTrip(t *testing.T) {
 		t.Errorf("BootstrapIndex on existing file should not modify content")
 	}
 }
+
+func TestCustomIndexPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	vaultCfg := config.VaultConfig{
+		Path:        tmpDir,
+		IndexFile:   "Meta/Dev-Index.md",
+		ProjectsDir: "Dev/Projects",
+	}
+
+	// 1. BootstrapIndex creates nested custom index path
+	if err := BootstrapIndex(vaultCfg); err != nil {
+		t.Fatalf("BootstrapIndex failed: %v", err)
+	}
+	indexPath := filepath.Join(tmpDir, "Meta", "Dev-Index.md")
+	content, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("reading bootstrapped index file: %v", err)
+	}
+	if !strings.Contains(string(content), "# Dev Index") {
+		t.Errorf("bootstrapped index missing header: %s", string(content))
+	}
+
+	// 2. UpdateIndex entry links use custom project dir
+	entry := &DevlogData{
+		ProjectName:  "AcmeWidgets.com",
+		Date:         "2026-10-03",
+		Content:      "**Architecture Overhaul**\n\nSome body text",
+		CommitsCount: 4,
+		Shortstat:    "4 files changed",
+	}
+	if err := UpdateIndex(vaultCfg, entry); err != nil {
+		t.Fatalf("UpdateIndex failed: %v", err)
+	}
+
+	contentAfter, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("reading index after update: %v", err)
+	}
+	expectedLink := "[[Dev/Projects/AcmeWidgets.com/Devlog/2026-10-03|2026-10-03]]"
+	if !strings.Contains(string(contentAfter), expectedLink) {
+		t.Errorf("index missing expected custom link %s:\n%s", expectedLink, string(contentAfter))
+	}
+
+	// 3. Re-run is byte-identical
+	if err := UpdateIndex(vaultCfg, entry); err != nil {
+		t.Fatalf("re-running UpdateIndex failed: %v", err)
+	}
+	contentRerun, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("reading index after rerun: %v", err)
+	}
+	if string(contentRerun) != string(contentAfter) {
+		t.Errorf("re-run was not byte-identical:\nbefore:\n%s\nafter:\n%s", string(contentAfter), string(contentRerun))
+	}
+}

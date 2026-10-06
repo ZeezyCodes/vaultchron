@@ -386,7 +386,7 @@ func runLegacyPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan,
 		projName := collector.ProjectName(repoPath)
 
 		// Skip-existing check in legacy mode unless -force
-		exists, _, err := vault.DevlogExists(cfg.Vault.Path, projName, today)
+		exists, _, err := vault.DevlogExists(cfg.Vault.Path, projName, today, cfg.Vault.ProjectsDir)
 		if err == nil && exists && !plan.Force {
 			results = append(results, RepoResult{
 				Name:    projName,
@@ -455,6 +455,8 @@ func runLegacyPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan,
 			Shortstat:    meta.Shortstat,
 			TopPackages:  meta.TopPackages,
 			Now:          nowStr,
+			IndexFile:    cfg.Vault.IndexFile,
+			ProjectsDir:  cfg.Vault.ProjectsDir,
 		}
 
 		if plan.DryRun {
@@ -477,10 +479,10 @@ func runLegacyPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan,
 				Name:    meta.Name,
 				Status:  "WRITTEN",
 				Commits: meta.CommitsCount,
-				Output:  fmt.Sprintf("Projects/%s/Devlog/%s.md", meta.Name, today),
+				Output:  fmt.Sprintf("%s/%s/Devlog/%s.md", cfg.Vault.ProjectsDir, meta.Name, today),
 			})
 		} else {
-			sysPrompt, userPrompt := BuildPrompt(meta, agentCtx)
+			sysPrompt, userPrompt := BuildPrompt(meta, agentCtx, cfg.Vault.ProjectsDir)
 			content, model, llmErr := llmClient.Call(ctx, sysPrompt, userPrompt)
 			if llmErr != nil {
 				fmt.Fprintf(os.Stderr, "[ERROR] %s: LLM generation failed: %v\n", meta.Name, llmErr)
@@ -517,7 +519,7 @@ func runLegacyPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan,
 				Output:  relPath,
 			})
 
-			if stubErr := vault.EnsureOverviewStub(cfg.Vault.Path, meta.Name, data.Slug); stubErr != nil {
+			if stubErr := vault.EnsureOverviewStub(cfg.Vault.Path, meta.Name, data.Slug, cfg.Vault); stubErr != nil {
 				fmt.Fprintf(os.Stderr, "[WARN] %s: overview stub creation failed: %v\n", meta.Name, stubErr)
 			}
 
@@ -581,7 +583,7 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 			projName := collector.ProjectName(repoPath)
 
 			// Step 1: Check note existence
-			exists, notePartial, err := vault.DevlogExists(cfg.Vault.Path, projName, day)
+			exists, notePartial, err := vault.DevlogExists(cfg.Vault.Path, projName, day, cfg.Vault.ProjectsDir)
 			if err != nil {
 				rows = append(rows, DayResultRow{
 					Repo:    projName,
@@ -628,7 +630,7 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 			}
 
 			commitsStr := fmt.Sprintf("%d", meta.CommitsCount)
-			expectedRelPath := fmt.Sprintf("Projects/%s/Devlog/%s.md", projName, day)
+			expectedRelPath := fmt.Sprintf("%s/%s/Devlog/%s.md", cfg.Vault.ProjectsDir, projName, day)
 
 			// Step 3: Check Call Cap
 			if plan.MaxCalls > 0 && llmCallsCount >= plan.MaxCalls {
@@ -680,7 +682,7 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 
 			// Real run: call LLM
 			llmCallsCount++ // every attempt counts, including failures
-			sysPrompt, userPrompt := BuildDayPrompt(meta, day, dayWindow.Partial)
+			sysPrompt, userPrompt := BuildDayPrompt(meta, day, dayWindow.Partial, cfg.Vault.ProjectsDir)
 			content, model, llmErr := llmClient.Call(ctx, sysPrompt, userPrompt)
 			if llmErr != nil {
 				fmt.Fprintf(os.Stderr, "[ERROR] %s (%s): LLM generation failed: %v\n", projName, day, llmErr)
@@ -710,6 +712,8 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 				Model:        model,
 				Content:      content,
 				Partial:      dayWindow.Partial,
+				IndexFile:    cfg.Vault.IndexFile,
+				ProjectsDir:  cfg.Vault.ProjectsDir,
 			}
 
 			if idxErr := vault.BootstrapIndex(cfg.Vault); idxErr != nil {
@@ -754,7 +758,7 @@ func runDayPlan(ctx context.Context, cfg *config.Config, plan *ExecutionPlan, re
 				continue
 			}
 
-			if stubErr := vault.EnsureOverviewStub(cfg.Vault.Path, meta.Name, devlogData.Slug); stubErr != nil {
+			if stubErr := vault.EnsureOverviewStub(cfg.Vault.Path, meta.Name, devlogData.Slug, cfg.Vault); stubErr != nil {
 				fmt.Fprintf(os.Stderr, "[WARN] %s: overview stub creation failed: %v\n", meta.Name, stubErr)
 			}
 

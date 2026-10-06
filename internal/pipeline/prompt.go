@@ -39,11 +39,29 @@ Rules:
 - Include Mermaid code blocks when system architecture changed.
 - Write in Obsidian-flavored markdown. Be concise but thorough.`
 
+// SystemPrompt returns the system prompt formatted with the given projects directory wikilink pattern.
+// If projectsDir is empty or "Projects", it returns the exact v0.2.0 systemPrompt constant.
+func SystemPrompt(projectsDir ...string) string {
+	pDir := "Projects"
+	if len(projectsDir) > 0 && projectsDir[0] != "" {
+		pDir = projectsDir[0]
+	}
+	if pDir == "Projects" {
+		return systemPrompt
+	}
+	return strings.Replace(
+		systemPrompt,
+		"[[Projects/<Name>/Overview|<Name>]]",
+		fmt.Sprintf("[[%s/<Name>/Overview|<Name>]]", pDir),
+		1,
+	)
+}
+
 // BuildPrompt constructs the system and user prompts for the LLM. The system
 // prompt enforces the Vault Callout v3 taxonomy. The user prompt injects real
 // telemetry (branch, churn, top packages), commit history, agent session context,
 // and a capped unified diff.
-func BuildPrompt(meta *collector.RepoMetadata, agentCtx *collector.AgentContext) (string, string) {
+func BuildPrompt(meta *collector.RepoMetadata, agentCtx *collector.AgentContext, projectsDir ...string) (string, string) {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("# Technical Journal — %s\n\n", meta.Name))
@@ -95,7 +113,7 @@ func BuildPrompt(meta *collector.RepoMetadata, agentCtx *collector.AgentContext)
 	b.WriteString("Do NOT include YAML frontmatter, breadcrumb, title, or telemetry callout — they are already rendered.\n")
 	b.WriteString("Do NOT use # ## ### headings inside callout bodies — use **bold inline headers** or bullet lists.\n")
 
-	return systemPrompt, b.String()
+	return SystemPrompt(projectsDir...), b.String()
 }
 
 func formatTopPackages(pkgs []string) string {
@@ -109,7 +127,7 @@ func formatTopPackages(pkgs []string) string {
 // It explicitly states that the note covers the local calendar day dateStr and
 // whether the day is partial (not yet complete).
 // Commit lines are capped at 200 followed by an omission summary line if exceeded.
-func BuildDayPrompt(meta *collector.RepoMetadata, dateStr string, partial bool) (string, string) {
+func BuildDayPrompt(meta *collector.RepoMetadata, dateStr string, partial bool, projectsDir ...string) (string, string) {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("# Technical Journal — %s\n\n", meta.Name))
@@ -166,5 +184,5 @@ func BuildDayPrompt(meta *collector.RepoMetadata, dateStr string, partial bool) 
 	b.WriteString("Do NOT include YAML frontmatter, breadcrumb, title, or telemetry callout — they are already rendered.\n")
 	b.WriteString("Do NOT use # ## ### headings inside callout bodies — use **bold inline headers** or bullet lists.\n")
 
-	return systemPrompt, b.String()
+	return SystemPrompt(projectsDir...), b.String()
 }

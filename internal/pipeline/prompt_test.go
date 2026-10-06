@@ -173,3 +173,34 @@ func TestBuildDayPrompt(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildPrompt_ProjectsDirWikilink(t *testing.T) {
+	meta := &collector.RepoMetadata{
+		Name:   "TestRepo",
+		Path:   "/path/to/repo",
+		Branch: "main",
+	}
+
+	// 1. Defaults: byte-identical to v0.2.0 text, asserting against exact original line
+	defaultSysPrompt, _ := BuildPrompt(meta, nil)
+	expectedOriginalLine := "- Whenever mentioning tracked ecosystem projects by name, format as wikilinks: [[Projects/<Name>/Overview|<Name>]]"
+	if !strings.Contains(defaultSysPrompt, expectedOriginalLine) {
+		t.Errorf("expected default prompt to contain exact original line %q", expectedOriginalLine)
+	}
+
+	// 2. Custom projects_dir: contains custom wikilink form
+	customSysPrompt, _ := BuildPrompt(meta, nil, "Dev/Projects")
+	expectedCustomLine := "- Whenever mentioning tracked ecosystem projects by name, format as wikilinks: [[Dev/Projects/<Name>/Overview|<Name>]]"
+	if !strings.Contains(customSysPrompt, expectedCustomLine) {
+		t.Errorf("expected custom prompt to contain %q, got:\n%s", expectedCustomLine, customSysPrompt)
+	}
+	if strings.Contains(customSysPrompt, "[[Projects/<Name>/Overview|<Name>]]") {
+		t.Errorf("custom prompt should not contain default Projects link")
+	}
+
+	// 3. Day prompt with custom projects_dir
+	customDaySysPrompt, _ := BuildDayPrompt(meta, "2026-10-03", false, "Dev/Projects")
+	if !strings.Contains(customDaySysPrompt, expectedCustomLine) {
+		t.Errorf("expected custom day prompt to contain %q", expectedCustomLine)
+	}
+}
