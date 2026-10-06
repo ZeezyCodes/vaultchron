@@ -396,3 +396,70 @@ func TestRunMigrate_CustomConfig(t *testing.T) {
 		t.Errorf("expected breadcrumb %q, got:\n%s", expectedBreadcrumb, string(migratedBytes))
 	}
 }
+
+func TestResolveVaultConfig_WarnsWhenConfigUnusable(t *testing.T) {
+	t.Run("invalid projects_dir", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfgPath := filepath.Join(tmpDir, "config.yaml")
+		cfgContent := "vault:\n  projects_dir: ../x\n"
+		if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		var errOut bytes.Buffer
+		vCfg, err := resolveVaultConfig("/explicit/vault", cfgPath, "", false, &errOut)
+		if err != nil {
+			t.Fatalf("expected nil err, got %v", err)
+		}
+		if vCfg.Path != "/explicit/vault" {
+			t.Errorf("expected Path /explicit/vault, got %q", vCfg.Path)
+		}
+		if vCfg.ProjectsDir != "Projects" {
+			t.Errorf("expected ProjectsDir Projects, got %q", vCfg.ProjectsDir)
+		}
+		if vCfg.IndexFile != "00-Dev-Index.md" {
+			t.Errorf("expected IndexFile 00-Dev-Index.md, got %q", vCfg.IndexFile)
+		}
+		outStr := errOut.String()
+		if !strings.Contains(outStr, "[WARN]") {
+			t.Errorf("expected errOut to contain [WARN], got: %s", outStr)
+		}
+		if !strings.Contains(outStr, "projects_dir") {
+			t.Errorf("expected errOut to contain projects_dir, got: %s", outStr)
+		}
+	})
+
+	t.Run("non-existent config path", func(t *testing.T) {
+		nonExistent := filepath.Join(t.TempDir(), "nonexistent.yaml")
+		var errOut bytes.Buffer
+		vCfg, err := resolveVaultConfig("/explicit/vault", nonExistent, "", false, &errOut)
+		if err != nil {
+			t.Fatalf("expected nil err, got %v", err)
+		}
+		if vCfg.Path != "/explicit/vault" {
+			t.Errorf("expected Path /explicit/vault, got %q", vCfg.Path)
+		}
+		outStr := errOut.String()
+		if !strings.Contains(outStr, "[WARN]") {
+			t.Errorf("expected errOut to contain [WARN], got: %s", outStr)
+		}
+	})
+}
+
+func TestResolveVaultConfig_NoConfigIsSilent(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+
+	var errOut bytes.Buffer
+	vCfg, err := resolveVaultConfig("/explicit/vault", "", "", false, &errOut)
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if strings.Contains(errOut.String(), "[WARN]") {
+		t.Errorf("expected errOut not to contain [WARN], got: %s", errOut.String())
+	}
+	if vCfg.Path != "/explicit/vault" {
+		t.Errorf("expected Path /explicit/vault, got %q", vCfg.Path)
+	}
+}

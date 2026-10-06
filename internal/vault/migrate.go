@@ -304,7 +304,7 @@ func MigrateContent(content string, projectName, date string, vaultCfg ...config
 		}
 
 		// Detect breadcrumb bar
-		if strings.Contains(line, "[[00-Dev-Index") || strings.Contains(line, "[["+indexLink) || strings.Contains(line, "🏠 Index") {
+		if strings.Contains(line, "[[00-Dev-Index") || strings.Contains(line, "[["+indexLink+"|") {
 			breadcrumbLine = trimmed
 			continue
 		}

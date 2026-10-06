@@ -68,6 +68,9 @@ func resolveVaultConfig(vaultFlag, configPath, fileFlag string, dryRun bool, err
 			if vaultFlag != "" {
 				vCfg.Path = vaultFlag
 			}
+			if configPath != "" {
+				fmt.Fprintf(errOut, "[WARN] config not applied to index_file/projects_dir, using defaults: %v\n", err)
+			}
 			return vCfg, nil
 		}
 		return vCfg, err
@@ -83,6 +86,7 @@ func resolveVaultConfig(vaultFlag, configPath, fileFlag string, dryRun bool, err
 			if vaultFlag != "" {
 				vCfg.Path = vaultFlag
 			}
+			fmt.Fprintf(errOut, "[WARN] config not applied to index_file/projects_dir, using defaults: %v\n", err)
 			return vCfg, nil
 		}
 		return vCfg, err

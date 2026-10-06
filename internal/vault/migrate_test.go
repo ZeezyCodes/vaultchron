@@ -195,3 +195,38 @@ func TestMigrateVault_CustomProjectsDir(t *testing.T) {
 		t.Errorf("migrated note missing custom breadcrumb %q:\n%s", expectedBreadcrumb, string(migratedBytes))
 	}
 }
+
+func TestMigrateContent_BreadcrumbMatchIsDelimited(t *testing.T) {
+	vCfg := config.VaultConfig{IndexFile: "Home.md"}
+	legacyA := "## Telemetry\n- commit 12345\n\n## Architecture\nsome arch notes\nSee [[Home Automation]] for the lab notes."
+	outA, err := MigrateContent(legacyA, "Foo", "2026-09-28", vCfg)
+	if err != nil {
+		t.Fatalf("MigrateContent failed: %v", err)
+	}
+	if !strings.Contains(outA, "See [[Home Automation]] for the lab notes.") {
+		t.Errorf("expected migrated output to contain body line")
+	}
+
+	legacyB := "[[Home|🏠 Index]] / [[Projects/Foo/Overview|Foo]]\n## Telemetry\n- commit 12345\n\n## Architecture\nsome arch notes\nSee [[Home Automation]] for the lab notes."
+	outB, err := MigrateContent(legacyB, "Foo", "2026-09-28", vCfg)
+	if err != nil {
+		t.Fatalf("MigrateContent failed: %v", err)
+	}
+	if !strings.Contains(outB, "See [[Home Automation]] for the lab notes.") {
+		t.Errorf("expected migrated output to contain body line")
+	}
+	if got := strings.Count(outB, "🏠 Index"); got != 1 {
+		t.Errorf("expected exactly 1 '🏠 Index', got %d", got)
+	}
+}
+
+func TestMigrateContent_DefaultKeepsIndexTextInBody(t *testing.T) {
+	legacy := "## Telemetry\n- commit 12345\n\n## Architecture\nsome arch notes\nBack to 🏠 Index later"
+	out, err := MigrateContent(legacy, "AcmeWidgets.com", "2026-08-20")
+	if err != nil {
+		t.Fatalf("MigrateContent failed: %v", err)
+	}
+	if !strings.Contains(out, "Back to 🏠 Index later") {
+		t.Errorf("expected line %q to be preserved in output:\n%s", "Back to 🏠 Index later", out)
+	}
+}
