@@ -79,6 +79,10 @@ The installer scripts download prebuilt binaries from GitHub Releases, verify ar
 - **Git**: Git CLI installed and accessible on `$PATH`.
 - **LLM API Key or Endpoint**: An API key for Google Gemini (`GOOGLE_API_KEY`), or an alternative provider API key if using an OpenAI-compatible endpoint.
 
+## Platform support
+
+Linux is the primary platform and the one the maintainer uses day to day. macOS (amd64, arm64) and Windows (amd64) binaries are built, and the test suite runs on all three platforms in CI on every commit, but the maintainer does not exercise macOS or Windows by hand on every release. If something does not work there, please open an issue with your OS, the command you ran and the output.
+
 ## Other ways to install
 
 ### Manual install (download and verify)
