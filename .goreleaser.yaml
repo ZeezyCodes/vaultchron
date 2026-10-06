@@ -76,6 +76,7 @@ archives:
       - README.md
       - config.example.yaml
       - deploy/*.*
+      - deploy/macos/*
 
   - id: windows
     ids:
