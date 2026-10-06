@@ -206,6 +206,12 @@ func TestMigrateContent_BreadcrumbMatchIsDelimited(t *testing.T) {
 	if !strings.Contains(outA, "See [[Home Automation]] for the lab notes.") {
 		t.Errorf("expected migrated output to contain body line")
 	}
+	if !strings.Contains(outA, "[[Home|🏠 Index]] / [[Projects/Foo/Overview|Foo]]") {
+		t.Errorf("expected output to contain generated breadcrumb:\n%s", outA)
+	}
+	if got := strings.Count(outA, "[[Home Automation]]"); got != 1 {
+		t.Errorf("expected exactly 1 '[[Home Automation]]', got %d in output:\n%s", got, outA)
+	}
 
 	legacyB := "[[Home|🏠 Index]] / [[Projects/Foo/Overview|Foo]]\n## Telemetry\n- commit 12345\n\n## Architecture\nsome arch notes\nSee [[Home Automation]] for the lab notes."
 	outB, err := MigrateContent(legacyB, "Foo", "2026-09-28", vCfg)
@@ -218,6 +224,9 @@ func TestMigrateContent_BreadcrumbMatchIsDelimited(t *testing.T) {
 	if got := strings.Count(outB, "🏠 Index"); got != 1 {
 		t.Errorf("expected exactly 1 '🏠 Index', got %d", got)
 	}
+	if !strings.Contains(outB, "[[Home|🏠 Index]] / [[Projects/Foo/Overview|Foo]]") {
+		t.Errorf("expected output to contain breadcrumb:\n%s", outB)
+	}
 }
 
 func TestMigrateContent_DefaultKeepsIndexTextInBody(t *testing.T) {
@@ -228,5 +237,11 @@ func TestMigrateContent_DefaultKeepsIndexTextInBody(t *testing.T) {
 	}
 	if !strings.Contains(out, "Back to 🏠 Index later") {
 		t.Errorf("expected line %q to be preserved in output:\n%s", "Back to 🏠 Index later", out)
+	}
+	if !strings.Contains(out, "[[00-Dev-Index|🏠 Index]] / [[Projects/AcmeWidgets.com/Overview|AcmeWidgets.com]]") {
+		t.Errorf("expected output to contain generated breadcrumb:\n%s", out)
+	}
+	if got := strings.Count(out, "🏠 Index"); got != 2 {
+		t.Errorf("expected exactly 2 '🏠 Index', got %d in output:\n%s", got, out)
 	}
 }
