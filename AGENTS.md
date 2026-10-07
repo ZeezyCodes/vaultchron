@@ -2,7 +2,7 @@
 
 ## Overview & Architecture
 
-VaultChron crawls configured Git project repositories, harvests commit telemetry and churn over a configurable time window, and prompts an LLM to generate structured devlog notes adhering to the Obsidian Callout v3 taxonomy. It automatically maintains an interactive devlog index (`00-Dev-Index.md`) with linked recent rollups and project directories.
+VaultChron crawls configured Git project repositories, harvests commit telemetry and churn over a configurable time window, and prompts an LLM to generate structured devlog notes adhering to the Obsidian Callout v3 taxonomy. It automatically maintains an interactive devlog index (`00-Dev-Index.md`) with linked recent devlogs and project directories.
 
 ### Package Layout
 - `cmd/vaultchron`: Main entry point and run-to-completion CLI command for repository scanning, devlog generation, and vault indexing.
